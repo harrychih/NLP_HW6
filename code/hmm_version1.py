@@ -206,25 +206,30 @@ class HiddenMarkovModel(nn.Module):
         # step.  But to better match the notation in the handout, we'll instead preallocate
         # a list of length n+2 so that we can assign directly to alpha[j].
         alpha = [torch.empty(self.k) for _ in sent]  
+      # word_0 = "BOSW"
+        ##ta_0
         n = len(sentence) 
+       # word_n = "EOSW"
+        ##set ta_n
         print(sent, alpha, j)
         ## pseudocode 
         ## for all words in the sentence 
-        for j in range(n+1):
+        for j in range(1, n+1):
             ##get the current word
             curr_word = sentence[j]
             ## get the tag set of that word 
             ## tagset
-            tag_set = tag_set[curr_word]
+            tag_set = self.tagset.index(curr_word)
             for tag_ in tag_set:
-                if j != 0:
-                    prev_word = sentence[j-1]
-                    tag_set_prev = tag_set[prev_word]
-                    for tag_prev in tag_set_prev:
-                        transition_prob = prob_(tag_ | tag_prev)
-                        emission_prob = prob_(curr_word | tag_)
-                        prob_t = transition_prob * emission_prob 
-                        alpha[j] += alpha[j-1] * prob_t
+                prev_word = sentence[j-1]
+                tag_set_prev = self.tagset.index(prev_word)
+                for tag_prev in tag_set_prev:
+                    transition_prob = self.A[tag_, tag_prev]
+                    #transition_prob = self.A(prob_(tag_ | tag_prev))
+                    #emission_prob = prob_(curr_word | tag_)
+                    emission_prob = self.B[curr_word, tag_]
+                    prob_t = transition_prob * emission_prob 
+                    alpha[j] += alpha[j-1] * prob_t
 
         return alpha[-1]
 
@@ -253,25 +258,25 @@ class HiddenMarkovModel(nn.Module):
         print(sent, alpha, j)
         ## pseudocode 
         ## for all words in the sentence 
-        for j in range(n+1):
+        for j in range(1,n+1):
             ##get the current word
             curr_word = sentence[j]
             ## get the tag set of that word 
-            tag_set = tag_set[curr_word]
+            tag_set = self.tagset.index(curr_word)
             for tag_ in tag_set:
-                #if j == 0:
-                if j != 0:
-                    prev_word = sentence[j-1]
-                    tag_set_prev = tag_set[prev_word]
-                    for tag_prev in tag_set_prev:
-                        transition_prob = prob_(tag_ | tag_prev)
-                        emission_prob = prob_(curr_word | tag_)
+                prev_word = sentence[j-1]
+                #tag_set_prev = tag_set[prev_word]
+                tag_set_prev = self.tagset.index(prev_word)
+                for tag_prev in tag_set_prev:
+                        #transition_prob = prob_(tag_ | tag_prev)
+                        transition_prob = self.A[tag_, tag_prev]
+                        #emission_prob = prob_(curr_word | tag_)
+                        emission_prob = self.B[curr_word, tag_]
                         prob_t = transition_prob * emission_prob 
                         prob_curr_path = alpha[j-1]*prob_t
                         if alpha[j] < prob_curr_path:
                             alpha[j] = prob_curr_path 
-                            backpointer[j] = tag_prev 
-                    
+                            backpointer[j] = tag_prev            
         ## tag of last as EOS 
         backpointer[n+1] = "EOS"
         for j in range(n+1, -1, -1):
@@ -373,5 +378,8 @@ class HiddenMarkovModel(nn.Module):
             return result
 
 
+if __name__ == "__main__":
 
+    m = HiddenMarkovModel()
+    print(m.printAB())
     
