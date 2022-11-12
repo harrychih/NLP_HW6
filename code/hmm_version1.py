@@ -211,7 +211,7 @@ class HiddenMarkovModel(nn.Module):
         n = len(sentence) 
        # word_n = "EOSW"
         ##set ta_n
-        print(sent, alpha, j)
+       # print(sent, alpha, j)
         ## pseudocode 
         ## for all words in the sentence 
         for j in range(1, n+1):
@@ -231,7 +231,7 @@ class HiddenMarkovModel(nn.Module):
                     prob_t = transition_prob * emission_prob 
                     alpha[j] += alpha[j-1] * prob_t
 
-        return alpha[-1]
+        return log(alpha[-1])
 
 
         #raise NotImplementedError   # you fill this in!
