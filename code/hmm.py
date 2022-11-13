@@ -201,13 +201,73 @@ class HiddenMarkovModel(nn.Module):
         integerizing correctly."""
 
         sent = self._integerize_sentence(sentence, corpus)
+       # print("sentence: {}|".format(sentence))
 
         # The "nice" way to construct alpha is by appending to a List[Tensor] at each
         # step.  But to better match the notation in the handout, we'll instead preallocate
         # a list of length n+2 so that we can assign directly to alpha[j].
         alpha = [torch.empty(self.k) for _ in sent]  
+        alpha[0] = 1
+      # word_0 = "BOSW"
+        ##ta_0
+        n = len(sentence) 
+        # print("1: {}".format((sentence[1][0], sentence[1][1])))
+        # print("2: {}".format((sentence[0][0], sentence[0][1])))
+       # word_n = "EOSW"
+        ##set ta_n
+       # print(sent, alpha, j)
+        ## pseudocode 
+        ## for all words in the sentence 
+        prev_tag_idx = corpus.tagset.index('_BOS_TAG_')
+        for j in range(1,n):
+            ##get the current word
+            curr_word = sentence[j][0]
+            curr_tag = sentence[j][1]
+           # print(curr_word, curr_tag)
+            
 
-        raise NotImplementedError   # you fill this in!
+            curr_word_idx = corpus.vocab.index(curr_word)
+            curr_tag_idx = corpus.tagset.index(curr_tag)
+
+            transition_prob = self.A[prev_tag_idx, curr_tag_idx]
+          #  print("curr word index : {}".format(curr_word_idx))
+            #print(self.B[curr_tag_idx][curr_word_idx])
+           # emission_prob = self.B[curr_tag_idx][curr_word_idx]
+            emission_prob = self.B[curr_tag_idx, curr_word_idx]
+            prob_t = transition_prob * emission_prob 
+            alpha[j] += alpha[j-1] * prob_t
+            prev_tag_idx = curr_tag_idx
+        
+        final_tag_idx = corpus.tagset.index('_EOS_TAG_')
+        transition_prob = self.A[prev_tag_idx, final_tag_idx]
+        total_prob = alpha[-1] * transition_prob
+       # alpha[n] = alpha[n-1] * 
+
+            ## get the tag set of that word 
+            ## tagset
+           # print(self.tagset._objects)
+            
+            #tag_set = self.tagset.index(curr_word)
+            # print("Tag set: {}".format(self.tagset))
+            # print("Sentence: {}".format(sent))
+            # print("Curr word: {}".format(curr_word))
+            # print("Tag set: {}".format(tag_set))
+            #for tag_ in tag_set:
+            
+                # prev_word = sentence[j-1]
+                # tag_set_prev = self.tagset.index(prev_word)
+                # for tag_prev in tag_set_prev:
+                #     transition_prob = self.A[tag_prev, tag_]
+                #     #transition_prob = self.A(prob_(tag_ | tag_prev))
+                #     #emission_prob = prob_(curr_word | tag_)
+                #     emission_prob = self.B[tag_, curr_word]
+                #     prob_t = transition_prob * emission_prob 
+                #     alpha[j] += alpha[j-1] * prob_t
+
+        return total_prob
+
+
+        #raise NotImplementedError   # you fill this in!
 
     def viterbi_tagging(self, sentence: Sentence, corpus: TaggedCorpus) -> Sentence:
         """Find the most probable tagging for the given sentence, according to the
@@ -216,10 +276,68 @@ class HiddenMarkovModel(nn.Module):
         # Note: This code is mainly copied from the forward algorithm.
         # We just switch to using max, and follow backpointers.
         # I've continued to call the vector alpha rather than mu.
+        
+        ## backpointer 
+        backpointer = {}
+        backpointer[0] = "_BOS_TAG_"
+
+        ## list of most probable tagging sequence 
+        most_prob_tag_seq_list = []
 
         sent = self._integerize_sentence(sentence, corpus)
+        ## added
+        ## change values in alpha to zeroes or -inf
+        alpha = [torch.empty(self.k) for _ in sent]  
+        n = len(sentence) 
+        prev_tag_idx = corpus.tagset.index('_BOS_TAG_')
+        for j in range(n):
+            ##get the current word
+            curr_word = sentence[j][0]
+            curr_tag = sentence[j][1]
 
-        raise NotImplementedError   # you fill this in!
+            curr_word_idx = corpus.vocab.index(curr_word)
+            curr_tag_idx = corpus.tagset.index(curr_tag)
+
+            transition_prob = self.A[prev_tag_idx, curr_tag_idx]
+            emission_prob = self.B[curr_tag_idx, curr_word_idx]
+            prob_t = transition_prob * emission_prob 
+            prob_curr_path = alpha[j-1]*prob_t
+            if alpha[j] < prob_curr_path:
+                alpha[j] = prob_curr_path 
+                backpointer[j+1] = curr_tag_idx
+                #backpointer[j] = prev_tag_idx 
+            prev_tag_idx = curr_tag_idx
+            
+       
+        ## pseudocode 
+        ## for all words in the sentence 
+        # for j in range(1,n+1):
+        #     ##get the current word
+        #     curr_word = sentence[j]
+        #     ## get the tag set of that word 
+        #     tag_set = self.tagset.index(curr_word)
+        #     for tag_ in tag_set:
+        #         prev_word = sentence[j-1]
+        #         #tag_set_prev = tag_set[prev_word]
+        #         tag_set_prev = self.tagset.index(prev_word)
+        #         for tag_prev in tag_set_prev:
+        #                 #transition_prob = prob_(tag_ | tag_prev)
+        #                 transition_prob = self.A[tag_, tag_prev]
+        #                 #emission_prob = prob_(curr_word | tag_)
+        #                 emission_prob = self.B[curr_word, tag_]
+        #                 prob_t = transition_prob * emission_prob 
+        #                 prob_curr_path = alpha[j-1]*prob_t
+        #                 if alpha[j] < prob_curr_path:
+        #                     alpha[j] = prob_curr_path 
+        #                     backpointer[j] = tag_prev            
+        ## tag of last as EOS 
+        backpointer[n] = "EOS"
+        for j in range(n, -1, -1):
+            most_prob_tag_seq_list.append(backpointer[j]) 
+
+        return  most_prob_tag_seq_list
+
+        #raise NotImplementedError   # you fill this in!
 
     def train(self,
               corpus: TaggedCorpus,
@@ -311,3 +429,10 @@ class HiddenMarkovModel(nn.Module):
                 raise ValueError(f"Type Error: expected object of type {cls} but got {type(result)} from pickled file.")
             logger.info(f"Loaded model from {source}")
             return result
+
+
+if __name__ == "__main__":
+
+    m = HiddenMarkovModel()
+    print(m.printAB())
+    
