@@ -24,7 +24,6 @@ from tqdm import tqdm # type: ignore
 from corpus import (BOS_TAG, BOS_WORD, EOS_TAG, EOS_WORD, Sentence, Tag,
                     TaggedCorpus, Word)
 from integerize import Integerizer
-import sys
 
 logger = logging.getLogger(Path(__file__).stem)  # For usage, see findsim.py in earlier assignment.
     # Note: We use the name "logger" this time rather than "log" since we
@@ -202,68 +201,13 @@ class HiddenMarkovModel(nn.Module):
         integerizing correctly."""
 
         sent = self._integerize_sentence(sentence, corpus)
-       # print("sentence: {}|".format(sentence))
 
         # The "nice" way to construct alpha is by appending to a List[Tensor] at each
         # step.  But to better match the notation in the handout, we'll instead preallocate
         # a list of length n+2 so that we can assign directly to alpha[j].
-        alpha = [torch.zeros(self.k) for _ in sent]  
+        alpha = [torch.empty(self.k) for _ in sent]  
 
-
-        n = len(sentence)
-        # print(sentence)
-
-        prev_tag_idx = sent[0][1]
-        alpha[0][prev_tag_idx] = 0
-        # print(f"sen: {sent}")
-        if sent[1][1] is not None:
-            for j in range(1,n-1):
-                ##get the current word
-                curr_word_idx = sent[j][0]
-                curr_tag_idx = sent[j][1]
-                # print(f"cur_w_idx: {curr_word_idx}, cur_t_idx: {curr_tag_idx}")
-                # print(self.A[prev_tag_idx, curr_tag_idx].item())
-                # print(curr_word_idx, curr_tag_idx)
-                log_transition_prob = log(self.A[prev_tag_idx, curr_tag_idx]) if self.A[prev_tag_idx, curr_tag_idx].item() != 0.0 else float('-inf')
-                log_emission_prob = log(self.B[curr_tag_idx, curr_word_idx]) if self.B[curr_tag_idx, curr_word_idx].item() != 0.0 else float('-inf')
-                log_prob_t = log_transition_prob + log_emission_prob 
-                alpha[j][curr_tag_idx] += alpha[j-1][prev_tag_idx] + log_prob_t
-                prev_tag_idx = curr_tag_idx
-            
-            final_tag_idx = sent[-1][1]
-            log_transition_prob = log(self.A[prev_tag_idx, final_tag_idx])
-            alpha[-1][final_tag_idx] = alpha[-2][prev_tag_idx] + log_transition_prob
-            # print(alpha[-1][final_tag_idx])
-            return alpha[-1][final_tag_idx]
-
-        else:
-            prev_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t not in ["_EOS_TAG_","_BOS_TAG_"]]
-            poss_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t != "_BOS_TAG_"]
-            for j in range(1, n-1):
-                curr_word_idx = sent[j][0]
-                if j == 1:
-                    for curr_tag_idx in poss_tags_idx:
-                        log_transition_prob = log(self.A[prev_tag_idx, curr_tag_idx]) if self.A[prev_tag_idx, curr_tag_idx].item() != 0.0 else float('-inf')
-                        log_emission_prob = log(self.B[curr_tag_idx, curr_word_idx]) if self.B[curr_tag_idx, curr_word_idx].item() != 0.0 else float('-inf')
-                        log_prob_t = log_transition_prob + log_emission_prob 
-                        alpha[1][curr_tag_idx] = log_prob_t
-                else:
-                    for curr_tag_idx in poss_tags_idx:
-                        for prev_tag_idx in prev_tags_idx:
-                            log_transition_prob = log(self.A[prev_tag_idx, curr_tag_idx]) if self.A[prev_tag_idx, curr_tag_idx].item() != 0.0 else float('-inf')
-                            log_emission_prob = log(self.B[curr_tag_idx, curr_word_idx]) if self.B[curr_tag_idx, curr_word_idx].item() != 0.0 else float('-inf')
-                            log_prob_t = log_transition_prob + log_emission_prob
-                            alpha[j][curr_tag_idx] += log_prob_t
-            final_tag_idx = sent[-1][1]
-            for prev_tag_idx in prev_tags_idx:
-                log_transition_prob = log(self.A[prev_tag_idx, final_tag_idx])
-                alpha[-1][final_tag_idx] += alpha[-2][prev_tag_idx] + log_transition_prob
-            
-            return alpha[-1][final_tag_idx]
-            
-
-                
-                
+        raise NotImplementedError   # you fill this in!
 
     def viterbi_tagging(self, sentence: Sentence, corpus: TaggedCorpus) -> Sentence:
         """Find the most probable tagging for the given sentence, according to the
@@ -272,57 +216,10 @@ class HiddenMarkovModel(nn.Module):
         # Note: This code is mainly copied from the forward algorithm.
         # We just switch to using max, and follow backpointers.
         # I've continued to call the vector alpha rather than mu.
-        # from collections import defaultdict
-        ## backpointer 
-        backpointer = {}
-        
-
-        ## list of most probable tagging sequence 
-        most_prob_tag_seq_list = []
 
         sent = self._integerize_sentence(sentence, corpus)
 
-        # backpointer[0] = sent[0][1]
-        ## added
-        ## change values in alpha to zeroes or -inf
-        alpha = [torch.tensor([float("-inf") for i in range(self.k)]) for _ in sent]  
-        n = len(sentence) - 2
-
-        prev_tag_idx = sent[0][1]
-
-        alpha[0][prev_tag_idx] = 0
-
-        # print(sent)
-        for j in range(1, n+1):
-            # print(backpointer)
-            ##get the current word
-            curr_word_idx = sent[j][0]
-            poss_tags = [t for t in corpus.tagset[:] if t != "_BOS_TAG_"]
-            for curr_tag in poss_tags:
-                curr_tag_idx = corpus.tagset.index(curr_tag)
-                # print(curr_tag_idx, curr_word_idx)
-                log_transition_prob = log(self.A[prev_tag_idx, curr_tag_idx]) if self.A[prev_tag_idx, curr_tag_idx].item() != 0.0 else float('-inf')
-                log_emission_prob = log(self.B[curr_tag_idx, curr_word_idx]) if self.B[curr_tag_idx, curr_word_idx].item() != 0.0 else float('-inf')
-                log_prob_t = log_transition_prob + log_emission_prob 
-                prob_curr_path = alpha[j-1][prev_tag_idx]+log_prob_t
-                # print(f"current prob: {alpha[j][curr_tag_idx]}")
-                # print(f"new prob: {prob_curr_path}")
-                if alpha[j][curr_tag_idx] < prob_curr_path:
-                    alpha[j][curr_tag_idx] = prob_curr_path 
-                    backpointer[j] = curr_tag_idx
-            # print(backpointer)
-            prev_tag_idx = backpointer[j]
-            
-       
-
-        # backpointer[n+1] = sent[n+1][1]
-
-        for j in range(n, 0, -1):
-            most_prob_tag_seq_list.append(corpus.tagset[backpointer[j]])
-
-        return  "".join(most_prob_tag_seq_list[::-1])
-
-        #raise NotImplementedError   # you fill this in!
+        raise NotImplementedError   # you fill this in!
 
     def train(self,
               corpus: TaggedCorpus,
@@ -414,10 +311,3 @@ class HiddenMarkovModel(nn.Module):
                 raise ValueError(f"Type Error: expected object of type {cls} but got {type(result)} from pickled file.")
             logger.info(f"Loaded model from {source}")
             return result
-
-
-if __name__ == "__main__":
-
-    m = HiddenMarkovModel()
-    print(m.printAB())
-    
