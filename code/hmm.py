@@ -208,14 +208,21 @@ class HiddenMarkovModel(nn.Module):
         # step.  But to better match the notation in the handout, we'll instead preallocate
         # a list of length n+2 so that we can assign directly to alpha[j].
         alpha = [torch.empty(self.k) for _ in sent]  
-
+        # print(len(sentence))
+        # print(sentence)
+        # print(len(sent))
+        # print(sent)
 
         n = len(sentence) - 2
         # print(sentence)
 
         prev_tag_idx = sent[0][1]
-        alpha[0][prev_tag_idx] = 0
-        # print(f"sen: {sent}")
+        # # log prob version
+        # alpha[0][prev_tag_idx] = 0
+        # prob version : convert this to log prob at the end
+        alpha[0][prev_tag_idx] = 1
+        # print(f"checking sentence: {sentence}")
+        # Supervised case
         if sent[1][1] is not None:
             for j in range(1,n+1):
                 ##get the current word
@@ -224,30 +231,44 @@ class HiddenMarkovModel(nn.Module):
                 # print(f"cur_w_idx: {curr_word_idx}, cur_t_idx: {curr_tag_idx}")
                 # print(self.A[prev_tag_idx, curr_tag_idx].item())
                 # print(curr_word_idx, curr_tag_idx)
-                log_transition_prob = log(self.A[prev_tag_idx, curr_tag_idx]) if self.A[prev_tag_idx, curr_tag_idx].item() != 0.0 else float('-inf')
-                log_emission_prob = log(self.B[curr_tag_idx, curr_word_idx]) if self.B[curr_tag_idx, curr_word_idx].item() != 0.0 else float('-inf')
-                log_prob_t = log_transition_prob + log_emission_prob 
-                alpha[j][curr_tag_idx] += alpha[j-1][prev_tag_idx] + log_prob_t
-                prev_tag_idx = curr_tag_idx
-            
-            final_tag_idx = sent[-1][1]
-            log_transition_prob = log(self.A[prev_tag_idx, final_tag_idx])
-            alpha[-1][final_tag_idx] = alpha[-2][prev_tag_idx] + log_transition_prob
-            # print(alpha[-1][final_tag_idx])
-            return alpha[-1][final_tag_idx]
+                log_transition_prob = torch.log(self.A[prev_tag_idx, curr_tag_idx]) if self.A[prev_tag_idx, curr_tag_idx].item() != 0.0 else torch.tensor(float('-inf'))
+                # transition_prob = self.A[prev_tag_idx, curr_tag_idx]
 
+                log_emission_prob = torch.log(self.B[curr_tag_idx, curr_word_idx]) if self.B[curr_tag_idx, curr_word_idx].item() != 0.0 else torch.tensor(float('-inf'))
+                # emission_prob = self.B[curr_tag_idx, curr_word_idx]
+
+                log_prob_t = log_transition_prob + log_emission_prob
+                # prob_t = transition_prob*emission_prob
+
+                alpha[j][curr_tag_idx] = torch.logaddexp(alpha[j-1][prev_tag_idx], log_prob_t)
+                # alpha[j][curr_tag_idx] += alpha[j-1][prev_tag_idx] * prob_t
+                prev_tag_idx = curr_tag_idx
+            # EOS
+            final_tag_idx = sent[-1][1]
+            log_transition_prob = torch.log(self.A[prev_tag_idx, final_tag_idx])
+            # final_transition_prob = self.A[prev_tag_idx, final_tag_idx]
+            alpha[n+1][final_tag_idx] = torch.logaddexp(alpha[n][prev_tag_idx], log_transition_prob)
+            # print("alpha for the sentence is")
+            # for a in alpha:
+            #     print(a)
+            # print("-"*20)
+            # print(alpha[-1][final_tag_idx])
+            return alpha[n+1][final_tag_idx]
+        # Unsupervised case
         else:
             prev_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t not in ["_EOS_TAG_","_BOS_TAG_"]]
             poss_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t not in ["_EOS_TAG_","_BOS_TAG_"]]
 
             for j in range(1, n+1):
                 curr_word_idx = sent[j][0]
+                # Given BOS -> calculate alpha
                 if j == 1:
                     for curr_tag_idx in poss_tags_idx:
                         log_transition_prob = log(self.A[prev_tag_idx, curr_tag_idx]) if self.A[prev_tag_idx, curr_tag_idx].item() != 0.0 else float('-inf')
                         log_emission_prob = log(self.B[curr_tag_idx, curr_word_idx]) if self.B[curr_tag_idx, curr_word_idx].item() != 0.0 else float('-inf')
                         log_prob_t = log_transition_prob + log_emission_prob 
                         alpha[1][curr_tag_idx] = log_prob_t
+                # Given Prev tag -> calculate alpha
                 else:
                     for curr_tag_idx in poss_tags_idx:
                         for prev_tag_idx in prev_tags_idx:
@@ -255,6 +276,7 @@ class HiddenMarkovModel(nn.Module):
                             log_emission_prob = log(self.B[curr_tag_idx, curr_word_idx]) if self.B[curr_tag_idx, curr_word_idx].item() != 0.0 else float('-inf')
                             log_prob_t = log_transition_prob + log_emission_prob
                             alpha[j][curr_tag_idx] += log_prob_t
+            # Given last tag -> calculate final alpha
             final_tag_idx = sent[-1][1]
             for prev_tag_idx in prev_tags_idx:
                 log_transition_prob = log(self.A[prev_tag_idx, final_tag_idx])
@@ -273,18 +295,16 @@ class HiddenMarkovModel(nn.Module):
         # Note: This code is mainly copied from the forward algorithm.
         # We just switch to using max, and follow backpointers.
         # I've continued to call the vector alpha rather than mu.
-        # from collections import defaultdict
-        ## backpointer 
-       
+
+        # backpointer 
         backpointer = {}
         
-
         ## list of most probable tagging sequence 
         most_prob_tag_seq_list = []
 
         sent = self._integerize_sentence(sentence, corpus)
 
-        # backpointer[0] = sent[0][1]
+
         ## added
         ## change values in alpha to zeroes or -inf
         alpha = [torch.tensor([float("-inf") for _ in range(self.k)]) for _ in sent]  
