@@ -100,13 +100,21 @@ def log_counts_lexicon(corpus: TaggedCorpus) -> torch.Tensor:
     then p(w | t) will be proportional to 1+count(t,w), just as in add-1 smoothing."""
     from collections import defaultdict
     wordTagFreq = defaultdict(int)
-    wordhasTag = defaultdict(list)
     for word, tag in corpus.get_sentences():
-        wordTagFreq[(word,tag)] += 1
-        wordhasTag[word].append(tag)
+        word_idx = corpus.integerize_word(word)
+        tag_idx = corpus.integerize_tag(tag)
+        wordTagFreq[(word_idx, tag_idx)] += 1
+
     row = len(corpus.vocab)
     col = len(corpus.tagset)
     matrix = torch.zeros(row, col)
+
+    for t in wordTagFreq:
+        c = wordTagFreq[t]
+        w_idx, t_idx = t
+        matrix[w_idx, t_idx] = log(1+c)
+    
+    return matrix
     
 
     # raise NotImplementedError   # you fill this in!

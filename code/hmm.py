@@ -207,17 +207,17 @@ class HiddenMarkovModel(nn.Module):
         # The "nice" way to construct alpha is by appending to a List[Tensor] at each
         # step.  But to better match the notation in the handout, we'll instead preallocate
         # a list of length n+2 so that we can assign directly to alpha[j].
-        alpha = [torch.zeros(self.k) for _ in sent]  
+        alpha = [torch.empty(self.k) for _ in sent]  
 
 
-        n = len(sentence)
+        n = len(sentence) - 2
         # print(sentence)
 
         prev_tag_idx = sent[0][1]
         alpha[0][prev_tag_idx] = 0
         # print(f"sen: {sent}")
         if sent[1][1] is not None:
-            for j in range(1,n-1):
+            for j in range(1,n+1):
                 ##get the current word
                 curr_word_idx = sent[j][0]
                 curr_tag_idx = sent[j][1]
@@ -238,8 +238,9 @@ class HiddenMarkovModel(nn.Module):
 
         else:
             prev_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t not in ["_EOS_TAG_","_BOS_TAG_"]]
-            poss_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t != "_BOS_TAG_"]
-            for j in range(1, n-1):
+            poss_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t not in ["_EOS_TAG_","_BOS_TAG_"]]
+
+            for j in range(1, n+1):
                 curr_word_idx = sent[j][0]
                 if j == 1:
                     for curr_tag_idx in poss_tags_idx:
@@ -257,9 +258,9 @@ class HiddenMarkovModel(nn.Module):
             final_tag_idx = sent[-1][1]
             for prev_tag_idx in prev_tags_idx:
                 log_transition_prob = log(self.A[prev_tag_idx, final_tag_idx])
-                alpha[-1][final_tag_idx] += alpha[-2][prev_tag_idx] + log_transition_prob
+                alpha[n+1][final_tag_idx] += alpha[n][prev_tag_idx] + log_transition_prob
             
-            return alpha[-1][final_tag_idx]
+            return alpha[n+1][final_tag_idx]
             
 
                 
@@ -274,6 +275,7 @@ class HiddenMarkovModel(nn.Module):
         # I've continued to call the vector alpha rather than mu.
         # from collections import defaultdict
         ## backpointer 
+       
         backpointer = {}
         
 
@@ -285,7 +287,7 @@ class HiddenMarkovModel(nn.Module):
         # backpointer[0] = sent[0][1]
         ## added
         ## change values in alpha to zeroes or -inf
-        alpha = [torch.tensor([float("-inf") for i in range(self.k)]) for _ in sent]  
+        alpha = [torch.tensor([float("-inf") for _ in range(self.k)]) for _ in sent]  
         n = len(sentence) - 2
 
         prev_tag_idx = sent[0][1]
@@ -293,32 +295,49 @@ class HiddenMarkovModel(nn.Module):
         alpha[0][prev_tag_idx] = 0
 
         # print(sent)
+        poss_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t != "_BOS_TAG_"]
+        prev_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t not in ["_BOS_TAG_", "_EOS_TAG_"]]
+        EOS_idx = corpus.tagset.index("_EOS_TAG_")
         for j in range(1, n+1):
             # print(backpointer)
             ##get the current word
             curr_word_idx = sent[j][0]
-            poss_tags = [t for t in corpus.tagset[:] if t != "_BOS_TAG_"]
-            for curr_tag in poss_tags:
-                curr_tag_idx = corpus.tagset.index(curr_tag)
-                # print(curr_tag_idx, curr_word_idx)
-                log_transition_prob = log(self.A[prev_tag_idx, curr_tag_idx]) if self.A[prev_tag_idx, curr_tag_idx].item() != 0.0 else float('-inf')
-                log_emission_prob = log(self.B[curr_tag_idx, curr_word_idx]) if self.B[curr_tag_idx, curr_word_idx].item() != 0.0 else float('-inf')
-                log_prob_t = log_transition_prob + log_emission_prob 
-                prob_curr_path = alpha[j-1][prev_tag_idx]+log_prob_t
-                # print(f"current prob: {alpha[j][curr_tag_idx]}")
-                # print(f"new prob: {prob_curr_path}")
-                if alpha[j][curr_tag_idx] < prob_curr_path:
-                    alpha[j][curr_tag_idx] = prob_curr_path 
-                    backpointer[j] = curr_tag_idx
-            # print(backpointer)
-            prev_tag_idx = backpointer[j]
+            if j == 1:
+                for curr_tag_idx in poss_tags_idx:
+                    if curr_tag_idx != EOS_idx:
+                        log_transition_prob = log(self.A[prev_tag_idx, curr_tag_idx]) if self.A[prev_tag_idx, curr_tag_idx].item() != 0.0 else float('-inf')
+                        log_emission_prob = log(self.B[curr_tag_idx, curr_word_idx]) if self.B[curr_tag_idx, curr_word_idx].item() != 0.0 else float('-inf')
+                        log_prob_t = log_transition_prob + log_emission_prob 
+                        if alpha[j][curr_tag_idx] < log_prob_t:
+                            alpha[j][curr_tag_idx] = log_prob_t
+                            backpointer[(j, curr_tag_idx)] = (j-1, prev_tag_idx)
+            else:
+                for curr_tag_idx in poss_tags_idx:
+                    for prev_tag_idx in prev_tags_idx:
+                        if curr_tag_idx != EOS_idx:
+                            log_transition_prob = log(self.A[prev_tag_idx, curr_tag_idx]) if self.A[prev_tag_idx, curr_tag_idx].item() != 0.0 else float('-inf')
+                            log_emission_prob = log(self.B[curr_tag_idx, curr_word_idx]) if self.B[curr_tag_idx, curr_word_idx].item() != 0.0 else float('-inf')
+                            log_prob_t = log_transition_prob + log_emission_prob 
+                            if alpha[j][curr_tag_idx] < alpha[j-1][prev_tag_idx] + log_prob_t:
+                                alpha[j][curr_tag_idx] = alpha[j-1][prev_tag_idx] + log_prob_t
+                                backpointer[(j,curr_tag_idx)] = (j-1, prev_tag_idx)
+        
+        for prev_tag_idx in prev_tags_idx:
+            log_prob = log(self.A[prev_tag_idx, EOS_idx]) if self.A[prev_tag_idx, EOS_idx].item() != 0.0 else float('-inf')
+            if alpha[n+1][EOS_idx] < alpha[n][prev_tag_idx] + log_prob_t:
+                alpha[n+1][EOS_idx] = alpha[n][prev_tag_idx] + log_prob_t
+                backpointer[(n+1, EOS_idx)] = (n, prev_tag_idx)
+        
+        cur_pos = (n+1, EOS_idx)
+        most_prob_tag_seq_list = []
+        # print(backpointer)
+        while cur_pos in backpointer:
+            if cur_pos[0] != 1:
+                most_prob_tag_seq_list.append(corpus.tagset[backpointer[cur_pos][1]])
+            cur_pos = backpointer[cur_pos]
             
-       
-
-        # backpointer[n+1] = sent[n+1][1]
-
-        for j in range(n, 0, -1):
-            most_prob_tag_seq_list.append(corpus.tagset[backpointer[j]])
+        # for j in range(n+1, 0, -1):
+        #     most_prob_tag_seq_list.append(corpus.tagset[backpointer[j]])
 
         return  "".join(most_prob_tag_seq_list[::-1])
 
