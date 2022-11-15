@@ -308,7 +308,7 @@ class HiddenMarkovModel(nn.Module):
             logA = torch.log(self.A)
             for j in range(1, n+1):
                 if j == 1:
-                    alpha[j] = logA[prev_tag_idx,:].add(alpha[0][prev_tag_idx]) + sumB
+                    alpha[j] = logA[prev_tag_idx,:].add(alpha[0][prev_tag_idx]).add(sumB)
                 else:
                     # print(alpha[j-1])
                     # print(logA)
@@ -318,15 +318,15 @@ class HiddenMarkovModel(nn.Module):
                     alpha[j] = logsumexp_new((logA.add(alpha[j-1].unsqueeze(1)).add(sumB)), dim=0, safe_inf=True)
             # print(alpha[n])
             # print('*'*100)
-            final_tag_idx = sent[-1][1]
+            # final_tag_idx = sent[-1][1]
             # print(logA.add(alpha[n].unsqueeze(1)))
             # print('*'*100)
             # print(logA.add(alpha[n].unsqueeze(1))[:,final_tag_idx])
 
-            alpha[n+1][final_tag_idx] = logsumexp_new((logA.add(alpha[n].unsqueeze(1))[:,final_tag_idx]), dim=-1, safe_inf=True)
+            alpha[n+1][final_tag_idx] = logsumexp_new((logA.add(alpha[n].unsqueeze(1))[:,final_tag_idx]), dim=0, safe_inf=True)
             # print(alpha[n+1][final_tag_idx])
 
-
+            # assert False
             return alpha[n+1][final_tag_idx]
             
 
