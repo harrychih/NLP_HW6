@@ -1,7 +1,7 @@
 import torch
+from logsumexp_safe import logsumexp_new
 
 x = torch.tensor([1])
-y = torch.rand((4,1))
-print(x)
+y = torch.rand((5,4))
 print(y)
-print(y.add(x).reshape(4,))
+print(logsumexp_new(y, dim=0, safe_inf=True))

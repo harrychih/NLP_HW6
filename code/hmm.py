@@ -304,28 +304,36 @@ class HiddenMarkovModel(nn.Module):
             #     log_transition_prob = log(self.A[prev_tag_idx, final_tag_idx])
             #     alpha[n+1][final_tag_idx] += alpha[n][prev_tag_idx] + log_transition_prob
             logB = torch.log(self.B)
-            sumB = logsumexp_new(logB, dim=1, safe_inf=True) 
             logA = torch.log(self.A)
             for j in range(1, n+1):
+                curr_word_idx = sent[j][0]
                 if j == 1:
-                    alpha[j] = logA[prev_tag_idx,:].add(alpha[0][prev_tag_idx]).add(sumB)
+                    alpha[j] = logA[prev_tag_idx,:].add(alpha[0][prev_tag_idx]).add(logB[:,curr_word_idx])
+
                 else:
                     # print(alpha[j-1])
                     # print(logA)
                     # print(sumB)
                     # print(logA.add(alpha[j-1].unsqueeze(1)).add(sumB))
                     # assert False
-                    alpha[j] = logsumexp_new((logA.add(alpha[j-1].unsqueeze(1)).add(sumB)), dim=0, safe_inf=True)
+                    alpha[j] = logsumexp_new(logA.add(alpha[j-1].unsqueeze(1)).add(logB[:,curr_word_idx]),dim=0, safe_inf=True)
+                    # print(alpha[j])
+                    # assert False
+                    # alpha[j] = logsumexp_new((logA.add(alpha[j-1].unsqueeze(1)).add(sumB)), dim=0, safe_inf=True)
+                # prev_word_idx = curr_word_idx
             # print(alpha[n])
             # print('*'*100)
-            # final_tag_idx = sent[-1][1]
+            final_tag_idx = sent[-1][1]
             # print(logA.add(alpha[n].unsqueeze(1)))
             # print('*'*100)
             # print(logA.add(alpha[n].unsqueeze(1))[:,final_tag_idx])
+            alpha[n+1][final_tag_idx] = logsumexp_new(logA[:,final_tag_idx].add(alpha[n]), dim=0, safe_inf=True)
 
-            alpha[n+1][final_tag_idx] = logsumexp_new((logA.add(alpha[n].unsqueeze(1))[:,final_tag_idx]), dim=0, safe_inf=True)
+            # alpha[n+1][final_tag_idx] = logsumexp_new((logA.add(alpha[n].unsqueeze(1))[:,final_tag_idx]), dim=0, safe_inf=True)
             # print(alpha[n+1][final_tag_idx])
-
+            # self.printAB()
+            # print('*'*100)
+            
             # assert False
             return alpha[n+1][final_tag_idx]
             
