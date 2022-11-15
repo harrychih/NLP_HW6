@@ -32,6 +32,7 @@ def model_cross_entropy(model: HiddenMarkovModel,
         for gold in tqdm(eval_corpus.get_sentences()):
             log_prob += model.log_prob(gold, eval_corpus).item()
             token_count += len(gold) - 1    # count EOS but not BOS
+    # print(f"log_prob: {log_prob}")
     cross_entropy = -log_prob / token_count
     log.info(f"Cross-entropy: {cross_entropy:.4f} nats (= perplexity {exp(cross_entropy):.3f})")
     return cross_entropy
