@@ -250,7 +250,8 @@ class HiddenMarkovModel(nn.Module):
   
                 log_prob_t = log_transition_prob + log_emission_prob
 
-                new_alpha[curr_tag_idx] = alpha[j-1][prev_tag_idx].clone() + log_prob_t
+                new_alpha[curr_tag_idx] = alpha[j-1][prev_tag_idx] + log_prob_t
+                alpha[j] = new_alpha
                 # alpha[j][curr_tag_idx] = alpha[j-1][prev_tag_idx].clone() + log_prob_t
                 # print(alpha[j])
                 prev_tag_idx = curr_tag_idx
