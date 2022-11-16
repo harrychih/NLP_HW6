@@ -38,6 +38,15 @@ cuda.manual_seed(69_420)  # No-op if CUDA isn't available
 
 patch_typeguard()   # makes @typechecked work with torchtyping
 
+# Monkey patch: replace the old methods with our improved versions
+if not hasattr(torch, 'logaddexp_old'):
+    torch.logaddexp_old = torch.logaddexp  # save original def so we can call it above
+    torch.logsumexp_old = torch.logsumexp  # save original def so we can call it above
+torch.logaddexp = logaddexp_new
+torch.Tensor.logaddexp = logaddexp_new
+torch.logsumexp = logsumexp_new
+torch.Tensor.logsumexp = logsumexp_new
+
 ###
 # HMM tagger
 ###
@@ -145,8 +154,10 @@ class HiddenMarkovModel(nn.Module):
     def updateAB(self) -> None:
         """Set the transition and emission matrices A and B, based on the current parameters.
         See the "Parametrization" section of the reading handout."""
+        # print(f"WA: {self._WA.grad}")
+        logA = F.log_softmax(self._WA, dim=1)
         
-        A = F.softmax(self._WA, dim=1)       # run softmax on params to get transition distributions
+        #F.softmax(self._WA, dim=1)       # run softmax on params to get transition distributions
                                              # note that the BOS_TAG column will be 0, but each row will sum to 1
         if self.unigram:
             # A is a row vector giving unigram probabilities p(t).
@@ -155,14 +166,21 @@ class HiddenMarkovModel(nn.Module):
             # code for unigram experiments, although unfortunately that
             # preserves the O(nk^2) runtime instead of letting us speed 
             # up to O(nk).
-            self.A = A.repeat(self.k, 1)
+            self.logA = logA.repeat(self.k, 1)
+            # self.A = A.repeat(self.k, 1)
         else:
             # A is already a full matrix giving p(t | s).
-            self.A = A
-
+            self.logA = logA
+            # self.A = A
+        # print(f"ThetaB: {self._ThetaB.grad}")
+        self.A = torch.exp(self.logA.clone())
         WB = self._ThetaB @ self._E.t()  # inner products of tag weights and word embeddings
-        B = F.softmax(WB, dim=1)         # run softmax on those inner products to get emission distributions
-        self.B = B.clone()
+        logB = F.log_softmax(WB, dim=1)
+        # B = F.softmax(WB, dim=1)         # run softmax on those inner products to get emission distributions
+        self.logB = logB.clone()
+        self.B = torch.exp(self.logB.clone())
+        self.logB[self.eos_t, :] = float('-inf')        
+        self.logB[self.bos_t, :] = float('-inf')     
         self.B[self.eos_t, :] = 0        # but don't guess: EOS_TAG can't emit any column's word (only EOS_WORD)
         self.B[self.bos_t, :] = 0        # same for BOS_TAG (although BOS_TAG will already be ruled out by other factors)
 
@@ -206,7 +224,6 @@ class HiddenMarkovModel(nn.Module):
         integerizing correctly."""
 
         sent = self._integerize_sentence(sentence, corpus)
-       # print("sentence: {}|".format(sentence))
 
         # The "nice" way to construct alpha is by appending to a List[Tensor] at each
         # step.  But to better match the notation in the handout, we'll instead preallocate
@@ -214,127 +231,76 @@ class HiddenMarkovModel(nn.Module):
         alpha = [torch.empty(self.k) for _ in sent]  
         n = len(sentence) - 2
         
-
-
-        # logB = torch.log(self.B)
-
-        # sumB = logsumexp_new(logB, dim=1, safe_inf=True) 
-
-        # assert False
-
         prev_tag_idx = sent[0][1]
-        # # log prob version
-        # alpha[0][prev_tag_idx] = 0
-        # prob version : convert this to log prob at the end
         alpha[0][prev_tag_idx] = 0
+
         # print(f"checking sentence: {sentence}")
         # Supervised case
         if sent[1][1] is not None:
-            # print(f"running sentence: {sentence}")
             for j in range(1,n+1):
-                ##get the current word
+                new_alpha = alpha[j].clone()
+                # get the current word
                 curr_word_idx = sent[j][0]
                 curr_tag_idx = sent[j][1]
                 
-                # log_transition_prob = torch.log(logsumexp_new(self.A[prev_tag_idx, curr_tag_idx], safe_inf=True, dim=0, keepdim=True))
-                
-                log_transition_prob = torch.log(self.A[prev_tag_idx, curr_tag_idx])
-
-                # print(f"log_trans_prob: {log_transition_prob}")
-                # log_emission_prob = torch.log(logsumexp_new(self.B[curr_tag_idx, curr_word_idx], safe_inf=True, dim=0, keepdim=True))
-                log_emission_prob = torch.log(self.B[curr_tag_idx, curr_word_idx])
-                # print(f"log_emiss_prob: {log_emission_prob}")
-
-                # print(f"log_trans: {log_transition_prob}, log_emiss: {log_emission_prob}")
-
+                # log_transition_prob = torch.log(self.A[prev_tag_idx, curr_tag_idx])
+                log_transition_prob = self.logA[prev_tag_idx, curr_tag_idx].clone()
+                # log_emission_prob = torch.log(self.B[curr_tag_idx, curr_word_idx])
+                log_emission_prob = self.logB[curr_tag_idx, curr_word_idx].clone()
+  
                 log_prob_t = log_transition_prob + log_emission_prob
-                # print(f"log_prob_t: {log_prob_t}")
-                # if j == 1:
-                #     alpha[j][curr_tag_idx] = log_prob_t
-                #     print(f"new alpha: {alpha[j][curr_tag_idx]}")
-                # else:
-                # print(f"last alpha: {alpha[j-1][prev_tag_idx]}")
-                # logsumexp_terms = torch.stack((alpha[j-1][prev_tag_idx], log_prob_t))
-                # print(f"logsumexp_terms: {logsumexp_terms}")
-                # item_change = alpha[j].clone()
-                # item_change[curr_tag_idx] = logsumexp_new(logsumexp_terms, safe_inf=True, dim=0, keepdim=True)
-                # print(f"new alpha: {item_change[curr_tag_idx]}")
-                alpha[j][curr_tag_idx] = alpha[j-1][prev_tag_idx] + log_prob_t
-                # alpha[j][curr_tag_idx] = logsumexp_new(logsumexp_terms, safe_inf=True, dim=0, keepdim=True)
 
+                new_alpha[curr_tag_idx] = alpha[j-1][prev_tag_idx].clone() + log_prob_t
+                # alpha[j][curr_tag_idx] = alpha[j-1][prev_tag_idx].clone() + log_prob_t
+                # print(alpha[j])
                 prev_tag_idx = curr_tag_idx
 
             # EOS
             final_tag_idx = sent[-1][1]
-            # log_transition_prob = torch.log(logsumexp_new(self.A[prev_tag_idx, final_tag_idx], safe_inf=True, dim=0, keepdim=True))
-            log_transition_prob = torch.log(self.A[prev_tag_idx, final_tag_idx])
-            # final_transition_prob = self.A[prev_tag_idx, final_tag_idx]
-            # final_logsumexp_terms = torch.stack((alpha[n][prev_tag_idx], log_transition_prob))
-            # final_item_change = alpha[n+1].clone()
-            # final_item_change[final_tag_idx] = logsumexp_new(final_logsumexp_terms, safe_inf=True, dim=0, keepdim=True)
-            alpha[n+1][final_tag_idx] = alpha[n][prev_tag_idx] + log_transition_prob
-            # print(f"log-forward-prob: {alpha[n+1][final_tag_idx]}")
-            # assert False
+            new_alpha = alpha[n+1].clone()
+            # log_transition_prob = torch.log(self.A[prev_tag_idx, final_tag_idx])
+            log_transition_prob = self.logA[prev_tag_idx, final_tag_idx].clone()
+            new_alpha[final_tag_idx] = alpha[n][prev_tag_idx].clone() + log_transition_prob
+            alpha[n+1] = new_alpha
+            # alpha[n+1][final_tag_idx] = alpha[n][prev_tag_idx] + log_transition_prob
+            # print(alpha[n+1][final_tag_idx])
             return alpha[n+1][final_tag_idx]
         # Unsupervised case
         else:
-            # prev_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t not in ["_EOS_TAG_","_BOS_TAG_"]]
-            # poss_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t not in ["_EOS_TAG_","_BOS_TAG_"]]
-            # alpha[0] = [tensor(empty, empty, empty, 0)]
-            # for j in range(1, n+1):
-            #     curr_word_idx = sent[j][0]
-            #     # Given BOS -> calculate alpha
-            #     if j == 1:
-            #         for curr_tag_idx in poss_tags_idx:
-            #             log_transition_prob = log(self.A[prev_tag_idx, curr_tag_idx]) if self.A[prev_tag_idx, curr_tag_idx].item() != 0.0 else float('-inf')
-            #             log_emission_prob = log(self.B[curr_tag_idx, curr_word_idx]) if self.B[curr_tag_idx, curr_word_idx].item() != 0.0 else float('-inf')
-            #             log_prob_t = log_transition_prob + log_emission_prob 
-            #             alpha[1][curr_tag_idx] = log_prob_t
-            #     # Given Prev tag -> calculate alpha
-            #     else:
-            #         for curr_tag_idx in poss_tags_idx:
-            #             for prev_tag_idx in prev_tags_idx:
-            #                 log_transition_prob = log(self.A[prev_tag_idx, curr_tag_idx]) if self.A[prev_tag_idx, curr_tag_idx].item() != 0.0 else float('-inf')
-            #                 log_emission_prob = log(self.B[curr_tag_idx, curr_word_idx]) if self.B[curr_tag_idx, curr_word_idx].item() != 0.0 else float('-inf')
-            #                 log_prob_t = log_transition_prob + log_emission_prob
-            #                 alpha[j][curr_tag_idx] += log_prob_t
-            # # Given last tag -> calculate final alpha
-            # final_tag_idx = sent[-1][1]
-            # for prev_tag_idx in prev_tags_idx:
-            #     log_transition_prob = log(self.A[prev_tag_idx, final_tag_idx])
-            #     alpha[n+1][final_tag_idx] += alpha[n][prev_tag_idx] + log_transition_prob
-            logB = torch.log(self.B)
-            logA = torch.log(self.A)
             for j in range(1, n+1):
                 curr_word_idx = sent[j][0]
+                new_alpha = alpha[j].clone()
                 if j == 1:
-                    alpha[j] = logA[prev_tag_idx,:].add(alpha[0][prev_tag_idx]).add(logB[:,curr_word_idx])
-
-                else:
-                    # print(alpha[j-1])
-                    # print(logA)
-                    # print(sumB)
-                    # print(logA.add(alpha[j-1].unsqueeze(1)).add(sumB))
-                    # assert False
-                    alpha[j] = logsumexp_new(logA.add(alpha[j-1].unsqueeze(1)).add(logB[:,curr_word_idx]),dim=0, safe_inf=True)
+                    log_trans_prob = self.logA[prev_tag_idx,:].clone()
+                    log_emiss_prob = self.logB[:,curr_word_idx].clone()
+                    new_alpha = log_trans_prob.add(log_emiss_prob)
+                    # new_alpha = logA[prev_tag_idx,:].add(alpha[0][prev_tag_idx]).add(logB[:,curr_word_idx])
+                    alpha[j] = new_alpha
                     # print(alpha[j])
-                    # assert False
-                    # alpha[j] = logsumexp_new((logA.add(alpha[j-1].unsqueeze(1)).add(sumB)), dim=0, safe_inf=True)
-                # prev_word_idx = curr_word_idx
-            # print(alpha[n])
-            # print('*'*100)
+                else:
+                    prev_alpha = alpha[j-1].unsqueeze(1).clone()
+                    # print(prev_alpha)
+                    log_trans_prob = self.logA.clone()
+                    log_emiss_prob = self.logB[:,curr_word_idx].clone()
+                    new_alpha = log_trans_prob.add(prev_alpha).add(log_emiss_prob).logsumexp(dim=0, safe_inf=True)
+                    # new_alpha = logA.add(alpha[j-1].unsqueeze(1)).add(logB[:,curr_word_idx]).logsumexp(dim=0, safe_inf=True)
+                    alpha[j] = new_alpha
+                    # print(alpha[j])
+                # print(f"alpha {j} is {alpha[j]}")
+                # assert False
             final_tag_idx = sent[-1][1]
-            # print(logA.add(alpha[n].unsqueeze(1)))
-            # print('*'*100)
-            # print(logA.add(alpha[n].unsqueeze(1))[:,final_tag_idx])
-            alpha[n+1][final_tag_idx] = logsumexp_new(logA[:,final_tag_idx].add(alpha[n]), dim=0, safe_inf=True)
+            final_alpha = alpha[n+1].clone()
+            # print(logA[:,final_tag_idx].add(alpha[n]))
+            prev_alpha = alpha[n].clone()
+            final_log_trans_prob = self.logA[:,final_tag_idx].clone()
+            final_alpha[final_tag_idx] = final_log_trans_prob.add(prev_alpha).logsumexp(dim=0, safe_inf=True)
+            # final_alpha[final_tag_idx] = logA[:,final_tag_idx].add(alpha[n]).logsumexp(dim=0, safe_inf=True)
+            # print(final_alpha)
+            alpha[n+1] = final_alpha
+            # print(f"final alpha: {alpha[n+1]}")
+            # print(f"final total log prob: {alpha[n+1][final_tag_idx]}")
 
-            # alpha[n+1][final_tag_idx] = logsumexp_new((logA.add(alpha[n].unsqueeze(1))[:,final_tag_idx]), dim=0, safe_inf=True)
-            # print(alpha[n+1][final_tag_idx])
-            # self.printAB()
-            # print('*'*100)
-            
-            # assert False
+            # print(alpha[n+1])
             return alpha[n+1][final_tag_idx]
             
 
@@ -378,8 +344,10 @@ class HiddenMarkovModel(nn.Module):
             if j == 1:
                 for curr_tag_idx in poss_tags_idx:
                     if curr_tag_idx != EOS_idx:
-                        log_transition_prob = torch.log(self.A[prev_tag_idx, curr_tag_idx]) 
-                        log_emission_prob = torch.log(self.B[curr_tag_idx, curr_word_idx]) 
+                        # log_transition_prob = torch.log(self.A[prev_tag_idx, curr_tag_idx]) 
+                        log_transition_prob = self.logA[prev_tag_idx, curr_tag_idx]
+                        # log_emission_prob = torch.log(self.B[curr_tag_idx, curr_word_idx]) 
+                        log_emission_prob = self.logB[curr_tag_idx, curr_word_idx]
                         log_prob_t = log_transition_prob + log_emission_prob 
                         if alpha[j][curr_tag_idx] < log_prob_t:
                             alpha[j][curr_tag_idx] = log_prob_t
@@ -388,15 +356,18 @@ class HiddenMarkovModel(nn.Module):
                 for curr_tag_idx in poss_tags_idx:
                     for prev_tag_idx in prev_tags_idx:
                         if curr_tag_idx != EOS_idx:
-                            log_transition_prob = torch.log(self.A[prev_tag_idx, curr_tag_idx]) 
-                            log_emission_prob = torch.log(self.B[curr_tag_idx, curr_word_idx]) 
+                            # log_transition_prob = torch.log(self.A[prev_tag_idx, curr_tag_idx]) 
+                            log_transition_prob = self.logA[prev_tag_idx, curr_tag_idx]
+                            # log_emission_prob = torch.log(self.B[curr_tag_idx, curr_word_idx]) 
+                            log_emission_prob = self.logB[curr_tag_idx, curr_word_idx]
                             log_prob_t = log_transition_prob + log_emission_prob 
                             if alpha[j][curr_tag_idx] < alpha[j-1][prev_tag_idx] + log_prob_t:
                                 alpha[j][curr_tag_idx] = alpha[j-1][prev_tag_idx] + log_prob_t
                                 backpointer[(j,curr_tag_idx)] = (j-1, prev_tag_idx)
         
         for prev_tag_idx in prev_tags_idx:
-            log_prob = torch.log(self.A[prev_tag_idx, EOS_idx])
+            # log_prob = torch.log(self.A[prev_tag_idx, EOS_idx])
+            log_prob = self.logA[prev_tag_idx, EOS_idx]
             if alpha[n+1][EOS_idx] < alpha[n][prev_tag_idx] + log_prob_t:
                 alpha[n+1][EOS_idx] = alpha[n][prev_tag_idx] + log_prob_t
                 backpointer[(n+1, EOS_idx)] = (n, prev_tag_idx)
@@ -466,15 +437,17 @@ class HiddenMarkovModel(nn.Module):
             # m is the number of examples we've seen so far.
             # If we're at the end of a minibatch, do an update.
             if m % minibatch_size == 0 and m > 0:
-                logger.debug(f"Training log-likelihood per example: {log_likelihood.item()/minibatch_size:.3f} nats")
-                optimizer.zero_grad()          # backward pass will add to existing gradient, so zero it
-                objective = -log_likelihood + (minibatch_size/corpus.num_tokens()) * reg * self.params_L2()
-                objective.backward()           # type: ignore # compute gradient of regularized negative log-likelihod
-                length = sqrt(sum((x.grad*x.grad).sum().item() for x in self.parameters()))
-                logger.debug(f"Size of gradient vector: {length}")  # should approach 0 for large minibatch at local min
-                optimizer.step()               # SGD step
-                self.updateAB()                # update A and B matrices from new params
-                log_likelihood = tensor(0.0, device=self.device)    # reset accumulator for next minibatch
+                # with torch.autograd.detect_anomaly():
+                with torch.enable_grad():
+                    logger.debug(f"Training log-likelihood per example: {log_likelihood.item()/minibatch_size:.3f} nats")
+                    optimizer.zero_grad()          # backward pass will add to existing gradient, so zero it
+                    objective = -log_likelihood + (minibatch_size/corpus.num_tokens()) * reg * self.params_L2()
+                    objective.backward()           # type: ignore # compute gradient of regularized negative log-likelihod
+                    length = sqrt(sum((x.grad*x.grad).sum().item() for x in self.parameters()))
+                    logger.debug(f"Size of gradient vector: {length}")  # should approach 0 for large minibatch at local min
+                    optimizer.step()               # SGD step
+                    self.updateAB()                # update A and B matrices from new params
+                    log_likelihood = tensor(0.0, device=self.device)    # reset accumulator for next minibatch
 
 
             # If we're at the end of an eval batch, or at the start of training, evaluate.
@@ -490,6 +463,8 @@ class HiddenMarkovModel(nn.Module):
 
             # Finally, add likelihood of sentence m to the minibatch objective.
             log_likelihood = log_likelihood + self.log_prob(sentence, corpus)
+            # print(log_likelihood)
+
 
 
     def save(self, destination: Path) -> None:
