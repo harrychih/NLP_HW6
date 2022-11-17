@@ -381,10 +381,17 @@ class HiddenMarkovModel(nn.Module):
                 most_prob_tag_seq_list.append(corpus.tagset[backpointer[cur_pos][1]])
             cur_pos = backpointer[cur_pos]
             
-        # for j in range(n+1, 0, -1):
-        #     most_prob_tag_seq_list.append(corpus.tagset[backpointer[j]])
+        most_prob_tag_seq_list = most_prob_tag_seq_list[::-1]
+        resList = [("_BOS_WORD_","_BOS_TAG_")]
+        for i, tag in enumerate(most_prob_tag_seq_list):
+            word = sentence[i+1][0]
+            resList.append((word, tag))
+        resList.append(("_EOS_WORD_","_EOS_TAG_"))
+        res = Sentence(resList)
 
-        return  "".join(most_prob_tag_seq_list[::-1])
+        return res
+
+        # return  "".join(most_prob_tag_seq_list[::-1])
 
         #raise NotImplementedError   # you fill this in!
 

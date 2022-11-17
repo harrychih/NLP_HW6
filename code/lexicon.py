@@ -114,10 +114,10 @@ def log_counts_lexicon(corpus: TaggedCorpus) -> torch.Tensor:
         w_idx, t_idx = t
         matrix[w_idx, t_idx] = log(1+c)
     
-    return matrix
+    # return matrix
     
 
-    # raise NotImplementedError   # you fill this in!
+    raise NotImplementedError   # you fill this in!
 
 def affixes_lexicon(corpus: TaggedCorpus) -> torch.Tensor:
     """Return a feature matrix with as many rows as corpus.vocab, where each

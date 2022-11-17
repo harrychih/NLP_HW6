@@ -67,3 +67,14 @@ hmm.train(corpus=icraw, loss=negative_log_likelihood,
 log.info("*** A, B matrices after reestimation on icraw (SGD, not EM, but still "
          "should approximately match final params on spreadsheet [transposed])")
 hmm.printAB()
+
+# # Keep train to see if we get the same parameters as EM algorithm
+# log.info("*** Train Repeatedly to check if they match the final parameters of EM Algorithm")
+# for i in range(10):
+#     log.info("training {i} time: ")
+#     negative_log_likelihood = lambda model: model_cross_entropy(model, icraw)
+#     hmm.train(corpus=icraw, loss=negative_log_likelihood,
+#           minibatch_size=10, evalbatch_size=500, lr=0.001, tolerance=0.0001)
+
+#     log.info("*** A, B matrices after reestimation on icraw {i}th iteration")
+#     hmm.printAB()
