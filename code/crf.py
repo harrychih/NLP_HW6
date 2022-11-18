@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 # CS465 at Johns Hopkins University.
-# Implementation of Hidden Markov Models.
+# Implementation of CRF-BiRNN.
 
 from __future__ import annotations
 import logging
@@ -20,20 +20,32 @@ from torch.nn.parameter import Parameter as Parameter
 from torchtyping import TensorType, patch_typeguard
 from typeguard import typechecked
 from tqdm import tqdm # type: ignore
+from logsumexp_safe import logaddexp_new, logsumexp_new
 
 from corpus import (BOS_TAG, BOS_WORD, EOS_TAG, EOS_WORD, Sentence, Tag,
                     TaggedCorpus, Word)
 from integerize import Integerizer
+import sys
 
 logger = logging.getLogger(Path(__file__).stem)  # For usage, see findsim.py in earlier assignment.
     # Note: We use the name "logger" this time rather than "log" since we
     # are already using "log" for the mathematical log!
+# logger.setLevel(logging.DEBUG)
 
 # Set the seed for random numbers in torch, for replicability
 torch.manual_seed(1337)
 cuda.manual_seed(69_420)  # No-op if CUDA isn't available
 
 patch_typeguard()   # makes @typechecked work with torchtyping
+
+# Monkey patch: replace the old methods with our improved versions
+if not hasattr(torch, 'logaddexp_old'):
+    torch.logaddexp_old = torch.logaddexp  # save original def so we can call it above
+    torch.logsumexp_old = torch.logsumexp  # save original def so we can call it above
+torch.logaddexp = logaddexp_new
+torch.Tensor.logaddexp = logaddexp_new
+torch.logsumexp = logsumexp_new
+torch.Tensor.logsumexp = logsumexp_new
 
 ###
 # HMM tagger
@@ -94,6 +106,8 @@ class HiddenMarkovModel(nn.Module):
     def device(self) -> torch.device:
         """Get the GPU (or CPU) our code is running on."""
         # Why the hell isn't this already in PyTorch?
+        if torch.backends.mps.is_available():
+            return "mps"
         return next(self.parameters()).device
 
 
@@ -140,8 +154,10 @@ class HiddenMarkovModel(nn.Module):
     def updateAB(self) -> None:
         """Set the transition and emission matrices A and B, based on the current parameters.
         See the "Parametrization" section of the reading handout."""
+        # print(f"WA: {self._WA.grad}")
+        logA = F.log_softmax(self._WA, dim=1)
         
-        A = F.softmax(self._WA, dim=1)       # run softmax on params to get transition distributions
+        #F.softmax(self._WA, dim=1)       # run softmax on params to get transition distributions
                                              # note that the BOS_TAG column will be 0, but each row will sum to 1
         if self.unigram:
             # A is a row vector giving unigram probabilities p(t).
@@ -150,14 +166,21 @@ class HiddenMarkovModel(nn.Module):
             # code for unigram experiments, although unfortunately that
             # preserves the O(nk^2) runtime instead of letting us speed 
             # up to O(nk).
-            self.A = A.repeat(self.k, 1)
+            self.logA = logA.repeat(self.k, 1)
+            # self.A = A.repeat(self.k, 1)
         else:
             # A is already a full matrix giving p(t | s).
-            self.A = A
-
+            self.logA = logA
+            # self.A = A
+        # print(f"ThetaB: {self._ThetaB.grad}")
+        self.A = torch.exp(self.logA.clone())
         WB = self._ThetaB @ self._E.t()  # inner products of tag weights and word embeddings
-        B = F.softmax(WB, dim=1)         # run softmax on those inner products to get emission distributions
-        self.B = B.clone()
+        logB = F.log_softmax(WB, dim=1)
+        # B = F.softmax(WB, dim=1)         # run softmax on those inner products to get emission distributions
+        self.logB = logB.clone()
+        self.B = torch.exp(self.logB.clone())
+        self.logB[self.eos_t, :] = float('-inf')        
+        self.logB[self.bos_t, :] = float('-inf')     
         self.B[self.eos_t, :] = 0        # but don't guess: EOS_TAG can't emit any column's word (only EOS_WORD)
         self.B[self.bos_t, :] = 0        # same for BOS_TAG (although BOS_TAG will already be ruled out by other factors)
 
@@ -206,8 +229,84 @@ class HiddenMarkovModel(nn.Module):
         # step.  But to better match the notation in the handout, we'll instead preallocate
         # a list of length n+2 so that we can assign directly to alpha[j].
         alpha = [torch.empty(self.k) for _ in sent]  
+        n = len(sentence) - 2
+        
+        prev_tag_idx = sent[0][1]
+        alpha[0][prev_tag_idx] = 0
 
-        raise NotImplementedError   # you fill this in!
+        # print(f"checking sentence: {sentence}")
+        # Supervised case
+        if sent[1][1] is not None:
+            for j in range(1,n+1):
+                new_alpha = alpha[j].clone()
+                # get the current word
+                curr_word_idx = sent[j][0]
+                curr_tag_idx = sent[j][1]
+                
+                # log_transition_prob = torch.log(self.A[prev_tag_idx, curr_tag_idx])
+                log_transition_prob = self.logA[prev_tag_idx, curr_tag_idx].clone()
+                # log_emission_prob = torch.log(self.B[curr_tag_idx, curr_word_idx])
+                log_emission_prob = self.logB[curr_tag_idx, curr_word_idx].clone()
+  
+                log_prob_t = log_transition_prob + log_emission_prob
+
+                new_alpha[curr_tag_idx] = alpha[j-1][prev_tag_idx] + log_prob_t
+                alpha[j] = new_alpha
+                # alpha[j][curr_tag_idx] = alpha[j-1][prev_tag_idx].clone() + log_prob_t
+                # print(alpha[j])
+                prev_tag_idx = curr_tag_idx
+
+            # EOS
+            final_tag_idx = sent[-1][1]
+            new_alpha = alpha[n+1].clone()
+            # log_transition_prob = torch.log(self.A[prev_tag_idx, final_tag_idx])
+            log_transition_prob = self.logA[prev_tag_idx, final_tag_idx].clone()
+            new_alpha[final_tag_idx] = alpha[n][prev_tag_idx].clone() + log_transition_prob
+            alpha[n+1] = new_alpha
+            # alpha[n+1][final_tag_idx] = alpha[n][prev_tag_idx] + log_transition_prob
+            # print(alpha[n+1][final_tag_idx])
+            return alpha[n+1][final_tag_idx]
+        # Unsupervised case
+        else:
+            for j in range(1, n+1):
+                curr_word_idx = sent[j][0]
+                new_alpha = alpha[j].clone()
+                if j == 1:
+                    log_trans_prob = self.logA[prev_tag_idx,:].clone()
+                    log_emiss_prob = self.logB[:,curr_word_idx].clone()
+                    new_alpha = log_trans_prob.add(log_emiss_prob)
+                    # new_alpha = logA[prev_tag_idx,:].add(alpha[0][prev_tag_idx]).add(logB[:,curr_word_idx])
+                    alpha[j] = new_alpha
+                    # print(alpha[j])
+                else:
+                    prev_alpha = alpha[j-1].unsqueeze(1).clone()
+                    # print(prev_alpha)
+                    log_trans_prob = self.logA.clone()
+                    log_emiss_prob = self.logB[:,curr_word_idx].clone()
+                    new_alpha = log_trans_prob.add(prev_alpha).add(log_emiss_prob).logsumexp(dim=0, safe_inf=True)
+                    # new_alpha = logA.add(alpha[j-1].unsqueeze(1)).add(logB[:,curr_word_idx]).logsumexp(dim=0, safe_inf=True)
+                    alpha[j] = new_alpha
+                    # print(alpha[j])
+                # print(f"alpha {j} is {alpha[j]}")
+                # assert False
+            final_tag_idx = sent[-1][1]
+            final_alpha = alpha[n+1].clone()
+            # print(logA[:,final_tag_idx].add(alpha[n]))
+            prev_alpha = alpha[n].clone()
+            final_log_trans_prob = self.logA[:,final_tag_idx].clone()
+            final_alpha[final_tag_idx] = final_log_trans_prob.add(prev_alpha).logsumexp(dim=0, safe_inf=True)
+            # final_alpha[final_tag_idx] = logA[:,final_tag_idx].add(alpha[n]).logsumexp(dim=0, safe_inf=True)
+            # print(final_alpha)
+            alpha[n+1] = final_alpha
+            # print(f"final alpha: {alpha[n+1]}")
+            # print(f"final total log prob: {alpha[n+1][final_tag_idx]}")
+
+            # print(alpha[n+1])
+            return alpha[n+1][final_tag_idx]
+            
+
+                
+                
 
     def viterbi_tagging(self, sentence: Sentence, corpus: TaggedCorpus) -> Sentence:
         """Find the most probable tagging for the given sentence, according to the
@@ -217,9 +316,84 @@ class HiddenMarkovModel(nn.Module):
         # We just switch to using max, and follow backpointers.
         # I've continued to call the vector alpha rather than mu.
 
+        # backpointer 
+        backpointer = {}
+        
+        ## list of most probable tagging sequence 
+        most_prob_tag_seq_list = []
+
         sent = self._integerize_sentence(sentence, corpus)
 
-        raise NotImplementedError   # you fill this in!
+
+        ## added
+        ## change values in alpha to zeroes or -inf
+        alpha = [torch.tensor([float("-inf") for _ in range(self.k)]) for _ in sent]  
+        n = len(sentence) - 2
+
+        prev_tag_idx = sent[0][1]
+
+        alpha[0][prev_tag_idx] = 0
+
+        # print(sent)
+        poss_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t != "_BOS_TAG_"]
+        prev_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t not in ["_BOS_TAG_", "_EOS_TAG_"]]
+        EOS_idx = corpus.tagset.index("_EOS_TAG_")
+        for j in range(1, n+1):
+            # print(backpointer)
+            ##get the current word
+            curr_word_idx = sent[j][0]
+            if j == 1:
+                for curr_tag_idx in poss_tags_idx:
+                    if curr_tag_idx != EOS_idx:
+                        # log_transition_prob = torch.log(self.A[prev_tag_idx, curr_tag_idx]) 
+                        log_transition_prob = self.logA[prev_tag_idx, curr_tag_idx]
+                        # log_emission_prob = torch.log(self.B[curr_tag_idx, curr_word_idx]) 
+                        log_emission_prob = self.logB[curr_tag_idx, curr_word_idx]
+                        log_prob_t = log_transition_prob + log_emission_prob 
+                        if alpha[j][curr_tag_idx] < log_prob_t:
+                            alpha[j][curr_tag_idx] = log_prob_t
+                            backpointer[(j, curr_tag_idx)] = (j-1, prev_tag_idx)
+            else:
+                for curr_tag_idx in poss_tags_idx:
+                    for prev_tag_idx in prev_tags_idx:
+                        if curr_tag_idx != EOS_idx:
+                            # log_transition_prob = torch.log(self.A[prev_tag_idx, curr_tag_idx]) 
+                            log_transition_prob = self.logA[prev_tag_idx, curr_tag_idx]
+                            # log_emission_prob = torch.log(self.B[curr_tag_idx, curr_word_idx]) 
+                            log_emission_prob = self.logB[curr_tag_idx, curr_word_idx]
+                            log_prob_t = log_transition_prob + log_emission_prob 
+                            if alpha[j][curr_tag_idx] < alpha[j-1][prev_tag_idx] + log_prob_t:
+                                alpha[j][curr_tag_idx] = alpha[j-1][prev_tag_idx] + log_prob_t
+                                backpointer[(j,curr_tag_idx)] = (j-1, prev_tag_idx)
+        
+        for prev_tag_idx in prev_tags_idx:
+            # log_prob = torch.log(self.A[prev_tag_idx, EOS_idx])
+            log_prob = self.logA[prev_tag_idx, EOS_idx]
+            if alpha[n+1][EOS_idx] < alpha[n][prev_tag_idx] + log_prob_t:
+                alpha[n+1][EOS_idx] = alpha[n][prev_tag_idx] + log_prob_t
+                backpointer[(n+1, EOS_idx)] = (n, prev_tag_idx)
+        
+        cur_pos = (n+1, EOS_idx)
+        most_prob_tag_seq_list = []
+        # print(backpointer)
+        while cur_pos in backpointer:
+            if cur_pos[0] != 1:
+                most_prob_tag_seq_list.append(corpus.tagset[backpointer[cur_pos][1]])
+            cur_pos = backpointer[cur_pos]
+            
+        most_prob_tag_seq_list = most_prob_tag_seq_list[::-1]
+        resList = [("_BOS_WORD_","_BOS_TAG_")]
+        for i, tag in enumerate(most_prob_tag_seq_list):
+            word = sentence[i+1][0]
+            resList.append((word, tag))
+        resList.append(("_EOS_WORD_","_EOS_TAG_"))
+        res = Sentence(resList)
+
+        return res
+
+        # return  "".join(most_prob_tag_seq_list[::-1])
+
+        #raise NotImplementedError   # you fill this in!
 
     def train(self,
               corpus: TaggedCorpus,
@@ -250,6 +424,7 @@ class HiddenMarkovModel(nn.Module):
         # in the minibatch at once, and then PyTorch could actually take
         # better advantage of hardware parallelism.
 
+
         assert minibatch_size > 0
         if minibatch_size > len(corpus):
             minibatch_size = len(corpus)  # no point in having a minibatch larger than the corpus
@@ -270,20 +445,24 @@ class HiddenMarkovModel(nn.Module):
             # m is the number of examples we've seen so far.
             # If we're at the end of a minibatch, do an update.
             if m % minibatch_size == 0 and m > 0:
-                logger.debug(f"Training log-likelihood per example: {log_likelihood.item()/minibatch_size:.3f} nats")
-                optimizer.zero_grad()          # backward pass will add to existing gradient, so zero it
-                objective = -log_likelihood + (minibatch_size/corpus.num_tokens()) * reg * self.params_L2()
-                objective.backward()           # type: ignore # compute gradient of regularized negative log-likelihod
-                length = sqrt(sum((x.grad*x.grad).sum().item() for x in self.parameters()))
-                logger.debug(f"Size of gradient vector: {length}")  # should approach 0 for large minibatch at local min
-                optimizer.step()               # SGD step
-                self.updateAB()                # update A and B matrices from new params
-                log_likelihood = tensor(0.0, device=self.device)    # reset accumulator for next minibatch
+                # with torch.autograd.detect_anomaly():
+                with torch.enable_grad():
+                    logger.debug(f"Training log-likelihood per example: {log_likelihood.item()/minibatch_size:.3f} nats")
+                    optimizer.zero_grad()          # backward pass will add to existing gradient, so zero it
+                    objective = -log_likelihood + (minibatch_size/corpus.num_tokens()) * reg * self.params_L2()
+                    objective.backward()           # type: ignore # compute gradient of regularized negative log-likelihod
+                    length = sqrt(sum((x.grad*x.grad).sum().item() for x in self.parameters()))
+                    logger.debug(f"Size of gradient vector: {length}")  # should approach 0 for large minibatch at local min
+                    optimizer.step()               # SGD step
+                    self.updateAB()                # update A and B matrices from new params
+                    log_likelihood = tensor(0.0, device=self.device)    # reset accumulator for next minibatch
+
 
             # If we're at the end of an eval batch, or at the start of training, evaluate.
             if m % evalbatch_size == 0:
                 with torch.no_grad():       # type: ignore # don't retain gradients during evaluation
                     dev_loss = loss(self)   # this will print its own log messages
+                # print(f"old_dev_loss: {old_dev_loss}, dev_loss: {dev_loss}")
                 if old_dev_loss is not None and dev_loss >= old_dev_loss * (1-tolerance):
                     # we haven't gotten much better, so stop
                     self.save(save_path)  # Store this model, in case we'd like to restore it later.
@@ -292,6 +471,8 @@ class HiddenMarkovModel(nn.Module):
 
             # Finally, add likelihood of sentence m to the minibatch objective.
             log_likelihood = log_likelihood + self.log_prob(sentence, corpus)
+            # print(log_likelihood)
+
 
 
     def save(self, destination: Path) -> None:
@@ -311,3 +492,10 @@ class HiddenMarkovModel(nn.Module):
                 raise ValueError(f"Type Error: expected object of type {cls} but got {type(result)} from pickled file.")
             logger.info(f"Loaded model from {source}")
             return result
+
+
+if __name__ == "__main__":
+
+    m = HiddenMarkovModel()
+    print(m.printAB())
+    

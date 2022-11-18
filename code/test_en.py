@@ -48,6 +48,8 @@ hmm = HiddenMarkovModel.load("my_hmm.pkl")
 
 # More detailed look at the first 10 sentences in the held-out corpus,
 # including Viterbi tagging.
+Tnum = 0
+Tdenom = 0
 for m, sentence in enumerate(endev):
     if m >= 10: break
     viterbi = hmm.viterbi_tagging(sentence.desupervise(), endev)
@@ -55,8 +57,10 @@ for m, sentence in enumerate(endev):
                           known_vocab=known_vocab)
     num = counts['NUM', 'ALL']
     denom = counts['DENOM', 'ALL']
-    
+    Tnum += num
+    Tdenom += denom
     log.info(f"Gold:    {sentence}")
     log.info(f"Viterbi: {viterbi}")
     log.info(f"Loss:    {denom - num}/{denom}")
     log.info(f"Prob:    {math.exp(hmm.log_prob(sentence, endev))}")
+log.info(f"Average Accuracy on first 10 sentences:    {Tnum/Tdenom}")

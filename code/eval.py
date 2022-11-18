@@ -111,4 +111,4 @@ def tagger_write_output(model_or_tagger: Union[HiddenMarkovModel, Callable[[Sent
     with open(output_path, 'w') as f:
         for gold in tqdm(eval_corpus.get_sentences()):
             predicted = tagger(gold.desupervise())
-            f.write(predicted+"\n")
+            f.write(str(predicted)+"\n")
