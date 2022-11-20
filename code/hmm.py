@@ -108,6 +108,8 @@ class HiddenMarkovModel(nn.Module):
         # Why the hell isn't this already in PyTorch?
         if torch.backends.mps.is_available():
             return "mps"
+        if torch.cuda.is_available():
+            return "cuda"
         return next(self.parameters()).device
 
 
@@ -233,7 +235,7 @@ class HiddenMarkovModel(nn.Module):
         
         prev_tag_idx = sent[0][1]
         alpha[0][prev_tag_idx] = 0
-
+        # twlogprob = [[None for _ in range(self.k)] for _ in range(n)]
         # print(f"checking sentence: {sentence}")
         # Supervised case
         if sent[1][1] is not None:
@@ -247,7 +249,7 @@ class HiddenMarkovModel(nn.Module):
                 log_transition_prob = self.logA[prev_tag_idx, curr_tag_idx].clone()
                 # log_emission_prob = torch.log(self.B[curr_tag_idx, curr_word_idx])
                 log_emission_prob = self.logB[curr_tag_idx, curr_word_idx].clone()
-  
+
                 log_prob_t = log_transition_prob + log_emission_prob
 
                 new_alpha[curr_tag_idx] = alpha[j-1][prev_tag_idx] + log_prob_t
@@ -275,6 +277,9 @@ class HiddenMarkovModel(nn.Module):
                     log_trans_prob = self.logA[prev_tag_idx,:].clone()
                     log_emiss_prob = self.logB[:,curr_word_idx].clone()
                     new_alpha = log_trans_prob.add(log_emiss_prob)
+                    # for tag_idx in tagset:
+                    #     twlogprob[j][tag_idx] = self.logB[tag_idx, curr_word_idx] + 0
+                    #     twlogprob[j][tag_idx].retain_grad()
                     # new_alpha = logA[prev_tag_idx,:].add(alpha[0][prev_tag_idx]).add(logB[:,curr_word_idx])
                     alpha[j] = new_alpha
                     # print(alpha[j])
@@ -305,7 +310,6 @@ class HiddenMarkovModel(nn.Module):
             return alpha[n+1][final_tag_idx]
             
 
-                
                 
 
     def viterbi_tagging(self, sentence: Sentence, corpus: TaggedCorpus) -> Sentence:

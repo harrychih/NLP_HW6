@@ -6,8 +6,11 @@ import logging
 from pathlib import Path
 from eval import model_cross_entropy, model_error_rate, tagger_write_output
 from hmm import HiddenMarkovModel
+from crf import CRFBiRNNModel
 from lexicon import build_lexicon
 from corpus import TaggedCorpus
+
+logging.basicConfig(format="%(levelname)s : %(message)s", level=logging.INFO) 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -125,7 +128,7 @@ def main() -> None:
     model = None
     if args.model is not None:
         if args.crf:
-            raise NotImplementedError   # you fill this in!
+            model = CRFBiRNNModel.load(Path(args.model))
         else:
             model = HiddenMarkovModel.load(Path(args.model))
         assert model is not None
@@ -138,7 +141,8 @@ def main() -> None:
         tagset = train.tagset
         vocab = train.vocab
         if args.crf:
-            raise NotImplementedError   # you fill this in!
+            lexicon = build_lexicon(train, embeddings_file=Path(args.lexicon), log_counts=args.awesome)
+            model = CRFBiRNNModel(tagset, vocab, lexicon, unigram=args.unigram)
         else:
             lexicon = build_lexicon(train, embeddings_file=Path(args.lexicon), log_counts=args.awesome)
             model = HiddenMarkovModel(tagset, vocab, lexicon, unigram=args.unigram)

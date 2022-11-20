@@ -12,6 +12,7 @@ from tqdm import tqdm # type: ignore
 
 from corpus import Sentence, Word, EOS_WORD, BOS_WORD, OOV_WORD, TaggedCorpus
 from hmm import HiddenMarkovModel
+from crf import CRFBiRNNModel
 from integerize import Integerizer
 
 log = logging.getLogger(Path(__file__).stem)  # For usage, see findsim.py in earlier assignment.
@@ -104,10 +105,11 @@ def eval_tagging(predicted: Sentence,
 def tagger_write_output(model_or_tagger: Union[HiddenMarkovModel, Callable[[Sentence], Sentence]],
                         eval_corpus: TaggedCorpus,
                         output_path: Path) -> None:
-    if isinstance(model_or_tagger, HiddenMarkovModel):
+    if isinstance(model_or_tagger, HiddenMarkovModel) or isinstance(model_or_tagger, CRFBiRNNModel):
         tagger = viterbi_tagger(model_or_tagger, eval_corpus)
     else:
         tagger = model_or_tagger
+    print(tagger)
     with open(output_path, 'w') as f:
         for gold in tqdm(eval_corpus.get_sentences()):
             predicted = tagger(gold.desupervise())

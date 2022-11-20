@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional, Set
 
 import torch
-
+import math
 from corpus import TaggedCorpus, BOS_WORD, EOS_WORD, OOV_WORD, Word
 
 log = logging.getLogger(Path(__file__).stem)  # For usage, see findsim.py in earlier assignment.
@@ -98,26 +98,35 @@ def log_counts_lexicon(corpus: TaggedCorpus) -> torch.Tensor:
     feature is log(1+c) where c=count(t,w) is the number of times t emitted w in supervised
     training data.  Thus, if this feature has weight 1.0 and is the only feature,
     then p(w | t) will be proportional to 1+count(t,w), just as in add-1 smoothing."""
+
     from collections import defaultdict
     wordTagFreq = defaultdict(int)
-    for word, tag in corpus.get_sentences():
-        word_idx = corpus.integerize_word(word)
-        tag_idx = corpus.integerize_tag(tag)
-        wordTagFreq[(word_idx, tag_idx)] += 1
+
+    for sentence in corpus:
+        senList = str(sentence).split()
+        for tword in senList:
+            try:
+                word, tag = tword.split('/')
+                word_idx = corpus.integerize_word(word)
+                tag_idx = corpus.integerize_tag(tag)
+                wordTagFreq[(word_idx, tag_idx)] += 1
+            except:
+                pass
 
     row = len(corpus.vocab)
     col = len(corpus.tagset)
     matrix = torch.zeros(row, col)
 
-    for t in wordTagFreq:
-        c = wordTagFreq[t]
-        w_idx, t_idx = t
-        matrix[w_idx, t_idx] = log(1+c)
+    for wt in wordTagFreq:
+        c = wordTagFreq[wt]
+        w_idx, t_idx = wt
+        matrix[w_idx, t_idx] = math.log(1+c)
     
-    # return matrix
+    log.info(f"From corpus, got feature matrix with {matrix.shape[0]} rows (number of vocabs) and {matrix.shape[1]} columns (number of tags)")
+
+    return matrix
     
 
-    raise NotImplementedError   # you fill this in!
 
 def affixes_lexicon(corpus: TaggedCorpus) -> torch.Tensor:
     """Return a feature matrix with as many rows as corpus.vocab, where each
@@ -128,3 +137,11 @@ def affixes_lexicon(corpus: TaggedCorpus) -> torch.Tensor:
     raise NotImplementedError
 
 # Other feature templates could be added, such as word shape.
+
+
+if __name__ == "__main__":
+    trainPath = "../data/endev"
+    lexiconPath = "../data/words-50.txt"
+    train = TaggedCorpus(Path(trainPath))
+    lexicon = build_lexicon(train, embeddings_file=Path(lexiconPath), log_counts=True)
+    print(lexicon)

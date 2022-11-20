@@ -54,6 +54,7 @@ os.system("cat icraw.output")   # print the file we just created, and remove it
 # the probability of the spreadsheet "sentence."
 log.info("*** Forward algorithm on icraw (should approximately match iteration 0 "
              "on spreadsheet)")
+
 for sentence in icraw:
     prob = math.exp(hmm.log_prob(sentence, icraw))
     log.info(f"{prob} = p({sentence})")
