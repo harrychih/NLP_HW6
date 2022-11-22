@@ -267,18 +267,12 @@ class CRFBiRNNModel(nn.Module):
         for j in range(1, n+1):
             word_idx = sent[j][0]
             w_j = self._E[word_idx,:].clone()
-            # if j == 0:
-            #     vec = torch.cat((one, emptyh.clone(), w_j), 0)
-            # else:
             vec = torch.cat((one, h[j-1].clone(), w_j), 0)
             h[j] = torch.sigmoid(self.M @ vec.unsqueeze(1)).t().squeeze()
         # backward
         for j in range(n, 0, -1):
             word_idx = sent[j][0]
             w_j = self._E[word_idx,:].clone()
-            # if j == n:
-            #     vec = torch.cat((one, w_j, emptyh.clone()), 0)
-            # else:
             vec = torch.cat((one, w_j, hp[j+1].clone()), 0)
             hp[j] = torch.sigmoid(self.MP @ vec.unsqueeze(1)).t().squeeze()
         
@@ -288,7 +282,7 @@ class CRFBiRNNModel(nn.Module):
     
 
     @typechecked
-    def feature_extract(self, sentence: Sentence, corpus: TaggedCorpus, h: list[TensorType[Any]], hp: list[TensorType[Any]]) -> Tuple[list[TensorType[Any, Any]], list[TensorType[Any, Any]]]:
+    def feature_extract(self, sentence: Sentence, corpus: TaggedCorpus, h: List[TensorType[Any]], hp: List[TensorType[Any]]) -> Tuple[List[TensorType[Any, Any]], List[TensorType[Any, Any]]]:
         """Extract feature matrix fa fb from h, h' we got in biRNN and run crf to get 
         conditional log likelihood objective later"""
 
@@ -321,30 +315,16 @@ class CRFBiRNNModel(nn.Module):
                     else:
                         vecA.append(torch.cat((one, h[i], self._T[s,:], self._T[t,:], hp[i-2]), 0))
                         vecB.append(torch.cat((one, h[i], self._T[t,:], self._E[curr_word_idx,:], hp[i-1]), 0))
-                # if i == 0:
-                #     vecA.append(torch.cat((one, h[i], emptyT.clone(), self._T[t,:], emptyh.clone()), 0))
-                #     vecB.append(torch.cat((one, h[i], self._T[curr_tag_idx,:], self._E[curr_word_idx,:], emptyh.clone()), 0))
-                # elif i == 1:
-                #     vecA = torch.cat((one, h[i], self._T[prev_tag_idx,:], self._T[curr_tag_idx,:], emptyh.clone()), 0)
-                #     vecB = torch.cat((one, h[i], self._T[curr_tag_idx,:], self._E[curr_word_idx,:], hp[i-1]), 0)
-                # elif i == n:
-                #     vecA = torch.cat((one, emptyh.clone(), self._T[prev_tag_idx,:], self._T[curr_tag_idx,:], hp[i-2]), 0)
-                #     vecB = torch.cat((one, emptyh.clone(), self._T[curr_tag_idx,:], emptyT.clone(), hp[i-1]), 0)
-                # else:
-                #     vecA = torch.cat((one, h[i], self._T[prev_tag_idx,:], self._T[curr_tag_idx,:], hp[i-2]), 0)
-                #     vecB = torch.cat((one, h[i], self._T[curr_tag_idx,:], self._E[curr_word_idx,:], hp[i-1]), 0)
             stEmbedd = torch.stack(vecA, dim=1)
             twEmbedd = torch.stack(vecB, dim=1)
             fA[i] = torch.sigmoid(self.UA @ stEmbedd)
             fB[i] = torch.sigmoid(self.UB @ twEmbedd)
-            # fA[i] = torch.sigmoid(self.UA @ vecA.unsqueeze(1))
-            # fB[i] = torch.sigmoid(self.UB @ vecB.unsqueeze(1))
             
             
         return (fA, fB)
 
     @typechecked
-    def log_forward_biRNN(self, sentence: Sentence, corpus: TaggedCorpus, fA: list[TensorType[Any, Any]], fB: list[TensorType[Any, Any]]) -> TensorType[()]:
+    def log_forward_biRNN(self, sentence: Sentence, corpus: TaggedCorpus, fA: List[TensorType[Any, Any]], fB: List[TensorType[Any, Any]]) -> TensorType[()]:
         """by using feature matrix fa fb, training with theta_a and theta_b to get the
         potension function, which is the conditional log likelihood objective"""
 
@@ -460,74 +440,131 @@ class CRFBiRNNModel(nn.Module):
 
         sent = self._integerize_sentence(sentence, corpus)
         n = len(sentence) - 2
+        if self.withBirnn:
+            h, hp = self.biRNN_forward(sentence, corpus)
+            fA, fB = self.feature_extract(sentence, corpus, h, hp)
+            phiA = [torch.empty(self.k, self.k) for _ in range(n+1)]
+            phiB = [torch.empty(self.k, self.V) for _ in range(n+1)]
 
-        h, hp = self.biRNN_forward(sentence, corpus)
-        fA, fB = self.feature_extract(sentence, corpus, h, hp)
-        phiA = [torch.empty(self.k, self.k) for _ in range(n+1)]
-        phiB = [torch.empty(self.k, self.V) for _ in range(n+1)]
 
+            BOS_TAG_idx = sent[0][1]
 
-        BOS_TAG_idx = sent[0][1]
+            # alpha[0][prev_tag_idx] = 0
+            log_prob_t = [[torch.tensor(float("-inf")) for _ in range(self.k)] for _ in range(n+1)]
+            for i in range(n+1):
+                curr_word, curr_tag = sent[i+1]
+                phiA[i] = torch.exp(self.Linear_PhiA(fA[i]))
+                phiB[i] = torch.exp(self.Linear_PhiB(fB[i]))
+                if i == 0:
+                    EOS_trans = phiA[i][BOS_TAG_idx, :].clone().unsqueeze(1)
+                    weightSum = phiB[i].clone() + EOS_trans
+                    currTagweight = weightSum.sum(1)
+                    Z = weightSum.sum()
+                    log_prob_t[i] = torch.log(currTagweight/Z)
+                    for tag_idx in range(self.k):
+                        backpointer[(i, tag_idx)] = (-1, BOS_TAG_idx)
+                elif i == n:
+                    weightSum = phiB[i].clone()
+                    layerweightSum = phiA[i]
+                    for prev_tag_idx in range(self.k):
+                        add_trans = phiA[i][prev_tag_idx, :].clone().unsqueeze(1)
+                        weightSum += add_trans
+                    Z = weightSum.sum()
+                    # Make sure we are dealing with last word -> EOS
+                    assert curr_tag is not None
+                    for prev_tag_idx in range(self.k):
+                        if log_prob_t[i][curr_tag] < log_prob_t[i-1][prev_tag_idx] + torch.log(layerweightSum[prev_tag_idx, curr_tag]/Z):
+                            log_prob_t[i][curr_tag] = log_prob_t[i-1][prev_tag_idx] + torch.log(layerweightSum[prev_tag_idx, curr_tag]/Z)
+                            backpointer[(i, curr_tag)] = (i-1, prev_tag_idx)
+                else:
+                    emissWeightSum = phiB[i][:,curr_word].clone()
+                    weightSum = phiB[i].clone()
+                    layerweightSum = phiA[i] + emissWeightSum
+                    for prev_tag_idx in range(self.k):
+                        add_trans = phiA[i][prev_tag_idx, :].clone().unsqueeze(1)
+                        weightSum += add_trans
+                    Z = weightSum.sum()
+                    for prev_tag_idx in range(self.k):
+                        for curr_tag_idx in range(self.k):
+                            if log_prob_t[i][curr_tag_idx] < log_prob_t[i-1][prev_tag_idx] + torch.log(layerweightSum[prev_tag_idx, curr_tag_idx]/Z):
+                                log_prob_t[i][curr_tag_idx] = log_prob_t[i-1][prev_tag_idx] + torch.log(layerweightSum[prev_tag_idx, curr_tag_idx]/Z)
+                                backpointer[(i, curr_tag_idx)] = (i-1, prev_tag_idx)
 
-        # alpha[0][prev_tag_idx] = 0
-        log_prob_t = [[torch.tensor(float("-inf")) for _ in range(self.k)] for _ in range(n+1)]
-        for i in range(n+1):
-            curr_word, curr_tag = sent[i+1]
-            phiA[i] = torch.exp(self.Linear_PhiA(fA[i]))
-            phiB[i] = torch.exp(self.Linear_PhiB(fB[i]))
-            if i == 0:
-                EOS_trans = phiA[i][BOS_TAG_idx, :].clone().unsqueeze(1)
-                weightSum = phiB[i].clone() + EOS_trans
-                currTagweight = weightSum.sum(1)
-                Z = weightSum.sum()
-                log_prob_t[i] = torch.log(currTagweight/Z)
-                for tag_idx in range(self.k):
-                    backpointer[(i, tag_idx)] = (-1, BOS_TAG_idx)
-            elif i == n:
-                # emissWeightSum = phiB[i][:,curr_word].clone()
-                weightSum = phiB[i].clone()
-                layerweightSum = phiA[i] #+ emissWeightSum
-                for prev_tag_idx in range(self.k):
-                    add_trans = phiA[i][prev_tag_idx, :].clone().unsqueeze(1)
-                    weightSum += add_trans
-                Z = weightSum.sum()
-                # Make sure we are dealing with last word -> EOS
-                assert curr_tag is not None
-                for prev_tag_idx in range(self.k):
-                    if log_prob_t[i][curr_tag] < log_prob_t[i-1][prev_tag_idx] + torch.log(layerweightSum[prev_tag_idx, curr_tag]/Z):
-                        log_prob_t[i][curr_tag] = log_prob_t[i-1][prev_tag_idx] + torch.log(layerweightSum[prev_tag_idx, curr_tag]/Z)
-                        backpointer[(i, curr_tag)] = (i-1, prev_tag_idx)
-            else:
-                emissWeightSum = phiB[i][:,curr_word].clone()
-                weightSum = phiB[i].clone()
-                layerweightSum = phiA[i] + emissWeightSum
-                for prev_tag_idx in range(self.k):
-                    add_trans = phiA[i][prev_tag_idx, :].clone().unsqueeze(1)
-                    weightSum += add_trans
-                Z = weightSum.sum()
-                for prev_tag_idx in range(self.k):
-                    for curr_tag_idx in range(self.k):
-                        if log_prob_t[i][curr_tag_idx] < log_prob_t[i-1][prev_tag_idx] + torch.log(layerweightSum[prev_tag_idx, curr_tag_idx]/Z):
-                            log_prob_t[i][curr_tag_idx] = log_prob_t[i-1][prev_tag_idx] + torch.log(layerweightSum[prev_tag_idx, curr_tag_idx]/Z)
-                            backpointer[(i, curr_tag_idx)] = (i-1, prev_tag_idx)
+            
+            cur_pos = (n, sent[n+1][1])
+            most_prob_tag_seq_list = []
+            while cur_pos in backpointer:
+                if cur_pos[0] != -1:
+                    most_prob_tag_seq_list.append(corpus.tagset[backpointer[cur_pos][1]])
+                cur_pos = backpointer[cur_pos]
+            most_prob_tag_seq_list = most_prob_tag_seq_list[:-1][::-1]
 
+            resList = [("_BOS_WORD_","_BOS_TAG_")]
+            for i, tag in enumerate(most_prob_tag_seq_list):
+                word = sentence[i+1][0]
+                resList.append((word, tag))
+            resList.append(("_EOS_WORD_","_EOS_TAG_"))
         
-        cur_pos = (n, sent[n+1][1])
-        most_prob_tag_seq_list = []
-        while cur_pos in backpointer:
-            if cur_pos[0] != -1:
-                most_prob_tag_seq_list.append(corpus.tagset[backpointer[cur_pos][1]])
-            cur_pos = backpointer[cur_pos]
-        most_prob_tag_seq_list = most_prob_tag_seq_list[:-1][::-1]
-        # print(most_prob_tag_seq_list)
-        resList = [("_BOS_WORD_","_BOS_TAG_")]
-        for i, tag in enumerate(most_prob_tag_seq_list):
-            word = sentence[i+1][0]
-            resList.append((word, tag))
-        resList.append(("_EOS_WORD_","_EOS_TAG_"))
-       
-        res = Sentence(resList)
+            res = Sentence(resList)
 
+
+        else:
+            weightSum = self.PhiB.clone()
+            for prev_tag in range(self.k):
+                add_trans = self.PhiA[prev_tag, :].clone().unsqueeze(1)
+                weightSum += add_trans
+            Z = weightSum.sum()
+            log_probs = [torch.tensor([float('-inf') for _ in range(self.k)]) for _ in range(n)]
+            for j in range(n-1):
+                curr_word_idx = sent[j+2][0]
+                new_log_prob = log_probs[j].clone()
+                for prev_tag in range(self.k):
+                    for curr_tag in range(self.k):
+                        trans_weight = self.PhiA[prev_tag,curr_tag].clone()
+                        emiss_weight = self.PhiB[curr_tag,curr_word_idx].clone()
+                        new_weight = torch.sum(trans_weight.add(emiss_weight))
+                        new_log_prob = torch.log(new_weight/Z)
+                        if j == 0:
+                            if log_probs[j][curr_tag] < new_log_prob:
+                                log_probs[j][curr_tag] =  new_log_prob
+                                backpointer[(j, curr_tag)] = (j-1, prev_tag)
+                        else:
+                            if log_probs[j][curr_tag] < log_probs[j-1][prev_tag] + new_log_prob:
+                                log_probs[j][curr_tag] =  log_probs[j-1][prev_tag] + new_log_prob
+                                backpointer[(j, curr_tag)] = (j-1, prev_tag)
+
+            final_word_idx = sent[n][0]
+            for prev_tag in range(self.k):
+                    for curr_tag in range(self.k):
+                        trans_weight = self.PhiA[prev_tag,curr_tag].clone()
+                        emiss_weight = self.PhiB[curr_tag,final_word_idx].clone()
+                        new_weight = torch.sum(trans_weight.add(emiss_weight))
+                        new_log_prob = torch.log(new_weight/Z)
+                        if log_probs[-1][curr_tag] < log_probs[-2][prev_tag] + new_log_prob:
+                            log_probs[n-1][curr_tag] =  new_log_prob
+                            backpointer[(n-1, curr_tag)] = (n-2, prev_tag)
+  
+            final_log_prob_list = log_probs[-1].tolist()
+            max_tag_idx = final_log_prob_list.index(max(final_log_prob_list))
+            cur_pos = (n-1, max_tag_idx)
+            while cur_pos in backpointer:
+                 most_prob_tag_seq_list.append(corpus.tagset[backpointer[cur_pos][1]])
+                 cur_pos = backpointer[cur_pos]
+            most_prob_tag_seq_list = most_prob_tag_seq_list[::-1]
+
+            # startword_idx = sent[1][0]
+            # startword = corpus.vocab[startword_idx]
+            # emiss_prob = self.PhiB[:,startword_idx]
+            # emiss_prob_list = emiss_prob.tolist()
+            # max_start_tag_idx = emiss_prob_list.index((max(emiss_prob_list)))
+            # max_start_tag = corpus.tagset[max_start_tag_idx]
+            resList = [("_BOS_WORD_","_BOS_TAG_")] #(startword, max_start_tag)
+            for i, tag in enumerate(most_prob_tag_seq_list):
+                word = sentence[i+1][0]
+                resList.append((word, tag))
+            resList.append(("_EOS_WORD_","_EOS_TAG_"))
+
+            res = Sentence(resList)
 
         return res
 

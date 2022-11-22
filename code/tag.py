@@ -34,6 +34,12 @@ def parse_args() -> argparse.Namespace:
         help="the newly created model (if no model was loaded) should be a CRF"
     )
     parser.add_argument(
+        "--withBirnn",
+        action="store_true",
+        default=False,
+        help="the newly created model (if no model was loaded) should be a CRF should be trained with Birnn feature selection"
+    )
+    parser.add_argument(
         "-u",
         "--unigram",
         action="store_true",
@@ -142,7 +148,7 @@ def main() -> None:
         vocab = train.vocab
         if args.crf:
             lexicon = build_lexicon(train, embeddings_file=Path(args.lexicon), log_counts=args.awesome)
-            model = CRFBiRNNModel(tagset, vocab, lexicon, unigram=args.unigram)
+            model = CRFBiRNNModel(tagset, vocab, lexicon, unigram=args.unigram, withBirnn=args.withBirnn)
         else:
             lexicon = build_lexicon(train, embeddings_file=Path(args.lexicon), log_counts=args.awesome)
             model = HiddenMarkovModel(tagset, vocab, lexicon, unigram=args.unigram)
