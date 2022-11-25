@@ -376,48 +376,99 @@ class HiddenMarkovModel(nn.Module):
         alpha = [torch.tensor([float("-inf") for _ in range(self.k)]) for _ in sent]  
         n = len(sentence) - 2
 
-        prev_tag_idx = sent[0][1]
+        alpha[0][self.bos_t] = 0
+        for j in range(n+1):
+            curr_word_idx = sent[j+1][0]
+            if j != n:
+                new_alpha = alpha[j].unsqueeze(1) + self.logA
+                weight = new_alpha + self.logB[:, curr_word_idx].squeeze()
+                max_weight = torch.max(weight, 0)
+                alpha[j+1] = max_weight[0]
+                for curr, prev in enumerate(max_weight[1]):
+                    backpointer[(j, curr)] = (j-1, prev.item())
+            else:
+                max_weight = torch.max(alpha[-2].unsqueeze(1)+self.logA, 0)
+                alpha[-1] = max_weight[0]
+                for curr, prev in enumerate(max_weight[1]):
+                    backpointer[(j, curr)] = (j-1, prev.item())
+            
+            cur_pos = (n,self.eos_t)
+            # most_prob_tag_seq_list = [cur_pos]
+            # print(backpointer)
+            while cur_pos in backpointer and backpointer[cur_pos][1] != self.bos_t:
+                 most_prob_tag_seq_list.append(corpus.tagset[backpointer[cur_pos][1]])
+                 cur_pos = backpointer[cur_pos]
+            most_prob_tag_seq_list = most_prob_tag_seq_list[::-1]
 
-        alpha[0][prev_tag_idx] = 0
+            resList = [("_BOS_WORD_","_BOS_TAG_")]
+            for i, tag in enumerate(most_prob_tag_seq_list):
+                word = sentence[i+1][0]
+                resList.append((word, tag))
+            resList.append(("_EOS_WORD_","_EOS_TAG_"))
+            # print(resList)
+            res = Sentence(resList)
+
+        return res
 
         
-        poss_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t != "_BOS_TAG_"]
-        prev_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t not in ["_BOS_TAG_", "_EOS_TAG_"]]
-        EOS_idx = corpus.tagset.index("_EOS_TAG_")
-        for j in range(1, n+1):
+        # poss_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t != "_BOS_TAG_"]
+        # prev_tags_idx = [corpus.tagset.index(t) for t in corpus.tagset[:] if t not in ["_BOS_TAG_", "_EOS_TAG_"]]
+        # EOS_idx = corpus.tagset.index("_EOS_TAG_")
+        # for j in range(1, n+1):
             
-            curr_word_idx = sent[j][0]
-            if j == 1:
-                for curr_tag_idx in poss_tags_idx:
-                    if curr_tag_idx != EOS_idx:
+        #     curr_word_idx, _ = sent[j]
+
+        #     if j == 1:
+        #         for curr_tag_idx in poss_tags_idx:
+        #             if curr_tag_idx != EOS_idx:
+        #                 if curr_word_idx in self.word_tag_d.keys():
+        #                     if curr_tag_idx in self.word_tag_d[curr_word_idx]:
                              
-                        log_transition_prob = self.logA[prev_tag_idx, curr_tag_idx]
-                            
-                        log_emission_prob = self.logB[curr_tag_idx, curr_word_idx]
-                        log_prob_t = log_transition_prob + log_emission_prob 
-                        if alpha[j][curr_tag_idx] < log_prob_t:
-                            alpha[j][curr_tag_idx] = log_prob_t
-                            backpointer[(j, curr_tag_idx)] = (j-1, prev_tag_idx)
-            else:
-                for curr_tag_idx in poss_tags_idx:
-                    for prev_tag_idx in prev_tags_idx:
-                        if curr_tag_idx != EOS_idx:
-                            
+        #                         log_transition_prob = self.logA[prev_tag_idx, curr_tag_idx]
+                                    
+        #                         log_emission_prob = self.logB[curr_tag_idx, curr_word_idx]
+        #                         log_prob_t = log_transition_prob + log_emission_prob 
+        #                         if alpha[j][curr_tag_idx] < log_prob_t:
+        #                             alpha[j][curr_tag_idx] = log_prob_t
+        #                             backpointer[(j, curr_tag_idx)] = (j-1, prev_tag_idx)
+        #                 else:
+        #                     log_transition_prob = self.logA[prev_tag_idx, curr_tag_idx]
+                                    
+        #                     log_emission_prob = self.logB[curr_tag_idx, curr_word_idx]
+        #                     log_prob_t = log_transition_prob + log_emission_prob 
+        #                     if alpha[j][curr_tag_idx] < log_prob_t:
+        #                         alpha[j][curr_tag_idx] = log_prob_t
+        #                         backpointer[(j, curr_tag_idx)] = (j-1, prev_tag_idx)
+
+        #     else:
+        #         for curr_tag_idx in poss_tags_idx:
+        #             for prev_tag_idx in prev_tags_idx:
+        #                 if curr_tag_idx != EOS_idx:
+        #                     if curr_word_idx in self.word_tag_d.keys():
+        #                         if curr_tag_idx in self.word_tag_d[curr_word_idx]:
                                 
-                            log_transition_prob = self.logA[prev_tag_idx, curr_tag_idx]
-                                
-                            log_emission_prob = self.logB[curr_tag_idx, curr_word_idx]
-                            log_prob_t = log_transition_prob + log_emission_prob 
-                            if alpha[j][curr_tag_idx] < alpha[j-1][prev_tag_idx] + log_prob_t:
-                                alpha[j][curr_tag_idx] = alpha[j-1][prev_tag_idx] + log_prob_t
-                                backpointer[(j,curr_tag_idx)] = (j-1, prev_tag_idx)
+        #                             log_transition_prob = self.logA[prev_tag_idx, curr_tag_idx]
+                                        
+        #                             log_emission_prob = self.logB[curr_tag_idx, curr_word_idx]
+        #                             log_prob_t = log_transition_prob + log_emission_prob 
+        #                             if alpha[j][curr_tag_idx] < alpha[j-1][prev_tag_idx] + log_prob_t:
+        #                                 alpha[j][curr_tag_idx] = alpha[j-1][prev_tag_idx] + log_prob_t
+        #                                 backpointer[(j,curr_tag_idx)] = (j-1, prev_tag_idx)
+        #                     else:
+        #                         log_transition_prob = self.logA[prev_tag_idx, curr_tag_idx]
+        #                         log_emission_prob = self.logB[curr_tag_idx, curr_word_idx]
+        #                         log_prob_t = log_transition_prob + log_emission_prob 
+        #                         if alpha[j][curr_tag_idx] < alpha[j-1][prev_tag_idx] + log_prob_t:
+        #                             alpha[j][curr_tag_idx] = alpha[j-1][prev_tag_idx] + log_prob_t
+        #                             backpointer[(j,curr_tag_idx)] = (j-1, prev_tag_idx)
+
             
-        for prev_tag_idx in prev_tags_idx:
+        # for prev_tag_idx in prev_tags_idx:
            
-            log_prob = self.logA[prev_tag_idx, EOS_idx]
-            if alpha[n+1][EOS_idx] < alpha[n][prev_tag_idx] + log_prob_t:
-                alpha[n+1][EOS_idx] = alpha[n][prev_tag_idx] + log_prob_t
-                backpointer[(n+1, EOS_idx)] = (n, prev_tag_idx)
+        #     log_prob = self.logA[prev_tag_idx, EOS_idx]
+        #     if alpha[n+1][EOS_idx] < alpha[n][prev_tag_idx] + log_prob_t:
+        #         alpha[n+1][EOS_idx] = alpha[n][prev_tag_idx] + log_prob_t
+        #         backpointer[(n+1, EOS_idx)] = (n, prev_tag_idx)
         
         
         cur_pos = (n+1, EOS_idx)
