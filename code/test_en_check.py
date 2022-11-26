@@ -35,7 +35,7 @@ ictrain = TaggedCorpus(Path("icsup"), Path("icraw"))                            
 known_vocab = TaggedCorpus(Path("ensup")).vocab    # words seen with supervised tags; used in evaluation
 
 
-crf = CRFBiRNNModel.load("../model/ic_crf_birnn.pkl")
+crf = CRFBiRNNModel.load("../model/en_crf_birnn.pkl")
 # hmm = HiddenMarkovModel.load('../model/en_hmm.pkl')
 
 ensup =   TaggedCorpus(Path("ensup"), tagset=crf.tagset, vocab=crf.vocab)
@@ -48,11 +48,11 @@ icdev =   TaggedCorpus(Path("icdev"), tagset=crf.tagset, vocab=crf.vocab)  # eva
 # including Viterbi tagging.
 Tnum = 0
 Tdenom = 0
-for m, sentence in tqdm(enumerate(icdev)):
-    if m >= 10: break
+for m, sentence in tqdm(enumerate(endev)):
+    # if m >= 10: break
     # print(sentence)
     # assert False
-    viterbi = crf.viterbi_tagging(sentence.desupervise(), icdev)
+    viterbi = crf.viterbi_tagging(sentence.desupervise(), endev)
     counts = eval_tagging(predicted=viterbi, gold=sentence, 
                           known_vocab=known_vocab)
     num = counts['NUM', 'ALL']
@@ -62,5 +62,5 @@ for m, sentence in tqdm(enumerate(icdev)):
     log.info(f"Gold:    {sentence}")
     log.info(f"Viterbi: {viterbi}")
     log.info(f"Loss:    {denom - num}/{denom}")
-    log.info(f"Prob:    {math.exp(crf.log_prob(sentence, icdev))}")
+    log.info(f"Prob:    {math.exp(crf.log_prob(sentence, endev))}")
 log.info(f"Average Accuracy on first 10 sentences:    {Tnum/Tdenom}")

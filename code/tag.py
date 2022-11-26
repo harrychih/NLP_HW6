@@ -68,10 +68,16 @@ def parse_args() -> argparse.Namespace:
              "(this is an practical trick that you can choose implement in the `train` method of hmm.py and crf.py)"
     )
     parser.add_argument(
+        "--save_step",
+        type=int,
+        default=5000,
+        help="number of steps to save model once to prevent training for too long "
+    )
+    parser.add_argument(
         "--reg",
         type=float,
         default=1.0,
-        help="l2 regularization during further training"
+        help="l2 regularizamtion during further training"
     )
     parser.add_argument(
         "--lr",
@@ -158,14 +164,19 @@ def main() -> None:
         assert train is not None and model is not None
         # you can instantiate a different development loss depending on the question / which one optimizes performance
         dev_loss =  lambda x: model_cross_entropy(x, dev)
-        model.train(corpus=train,
-                    loss=dev_loss,
-                    minibatch_size=args.train_batch_size,
-                    evalbatch_size=args.eval_batch_size,
-                    lr=args.lr,
-                    reg=args.reg,
-                    save_path=args.save_path,
-                    tolerance=args.tolerance)
+        try:
+            model.train(corpus=train,
+                        loss=dev_loss,
+                        minibatch_size=args.train_batch_size,
+                        evalbatch_size=args.eval_batch_size,
+                        lr=args.lr,
+                        reg=args.reg,
+                        save_path=args.save_path,
+                        tolerance=args.tolerance,
+                        max_iter=args.max_iters,
+                        save_step=args.save_step)
+        except KeyboardInterrupt:
+            model.save(args.save_path)
     tagger_write_output(model, dev, Path(args.eval+".output") if args.output_file is None else args.output_file)
 
 

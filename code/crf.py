@@ -114,7 +114,7 @@ class CRFBiRNNModel(nn.Module):
         if torch.backends.mps.is_available():
             return torch.device("mps")
         if torch.cuda.is_available():
-            return torch.device("cuda:0")
+            return torch.device("cuda")
         return next(self.parameters()).device
 
 
@@ -137,12 +137,12 @@ class CRFBiRNNModel(nn.Module):
 
         # # See the reading handout section "Parametrization.""
 
-        ThetaB = 0.01*torch.rand(self.k, self.d)    
+        ThetaB = 0.01*torch.rand(self.k, self.d) 
         self._ThetaB = Parameter(ThetaB)    # params used to construct emission matrix
 
         WA = 0.01*torch.rand(1 if self.unigram # just one row if unigram model
                              else self.k,      # but one row per tag s if bigram model
-                             self.k)           # one column per tag t
+                             self.k)          # one column per tag t
         # WA[:, self.bos_t] = -inf               # correct the BOS_TAG column
         self._WA = Parameter(WA)            # params used to construct transition matrix
 
@@ -375,7 +375,7 @@ class CRFBiRNNModel(nn.Module):
                 alpha_z[i+1][self.eos_t] = torch.logsumexp(alpha_z[i] + logphiA[i][:, self.eos_t], dim=0, safe_inf=True)
         
             
-        return alpha[n+1][self.eos_t] - alpha_z[i+1][self.eos_t]
+        return alpha[n+1][self.eos_t] - alpha_z[n+1][self.eos_t]
 
     @typechecked
     def log_forward(self, sentence: Sentence, corpus: TaggedCorpus) -> TensorType[()]:
@@ -390,7 +390,7 @@ class CRFBiRNNModel(nn.Module):
         # path_weight = [torch.empty(1) for _ in range(n+1)]
         # alpha = [torch.empty(self.k) for _ in range(n+1)]
         
-        alpha = [torch.tensor([float('-inf') for _ in range(self.k)]) for _ in sent]  
+        alpha = [torch.tensor([float('-inf') for _ in range(self.k)], device=self.device) for _ in sent]  
         n = len(sentence) - 2
         # Supervised case
         if sent[1][1] is not None:
@@ -537,14 +537,15 @@ class CRFBiRNNModel(nn.Module):
 
         eos_tag = sent[n+1][1]
         cur_pos = (n,eos_tag)
-        most_prob_tag_seq_list = []
+        most_prob_tag_seq_list = [corpus.tagset[eos_tag]]
         while cur_pos in backpointer:
             most_prob_tag_seq_list.append(corpus.tagset[backpointer[cur_pos][1]])
             cur_pos = backpointer[cur_pos]
         most_prob_tag_seq_list = most_prob_tag_seq_list[::-1]
-
+        # print(most_prob_tag_seq_list)
         resList = [("_BOS_WORD_","_BOS_TAG_")]
-        for i, tag in enumerate(most_prob_tag_seq_list):
+        # resList = [()]
+        for i, tag in enumerate(most_prob_tag_seq_list[1:-1]):
             word = sentence[i+1][0]
             resList.append((word, tag))
         resList.append(("_EOS_WORD_","_EOS_TAG_"))
@@ -564,6 +565,8 @@ class CRFBiRNNModel(nn.Module):
               evalbatch_size: int = 500,
               lr: float = 1.0,
               reg: float = 0.0,
+              max_iter: int = 50000,
+              save_step: int = 5000,
               save_path: Path = Path("my_crf.pkl")) -> None:
         """Train the HMM on the given training corpus, starting at the current parameters.
         The minibatch size controls how often we do an update.
@@ -629,11 +632,16 @@ class CRFBiRNNModel(nn.Module):
                 with torch.no_grad():       # type: ignore # don't retain gradients during evaluation
                     dev_loss = loss(self)   # this will print its own log messages
                 # print(f"old_dev_loss: {old_dev_loss}, dev_loss: {dev_loss}")
-                if old_dev_loss is not None and dev_loss >= old_dev_loss * (1-tolerance):
+                if (old_dev_loss is not None and dev_loss >= old_dev_loss * (1-tolerance)) or m > max_iter:
                     # we haven't gotten much better, so stop
                     self.save(save_path)  # Store this model, in case we'd like to restore it later.
                     break
                 old_dev_loss = dev_loss            # remember for next eval batch
+
+            # Save models every "save_setep" iteration
+            if m % save_step == 0:
+                logger.info(f"Saving the model every {save_step} iteration: currently {m / save_step} times to save")
+                self.save(save_path)
             # Finally, add likelihood of sentence m to the minibatch objective.
             log_likelihood = log_likelihood + self.log_prob(sentence, corpus)
             # print(log_likelihood)
