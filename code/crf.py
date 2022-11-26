@@ -390,7 +390,7 @@ class CRFBiRNNModel(nn.Module):
         # path_weight = [torch.empty(1) for _ in range(n+1)]
         # alpha = [torch.empty(self.k) for _ in range(n+1)]
         
-        alpha = [torch.tensor([float('-inf') for _ in range(self.k)], device=self.device) for _ in sent]  
+        alpha = [torch.tensor([float('-inf') for _ in range(self.k)]) for _ in sent]  
         n = len(sentence) - 2
         # Supervised case
         if sent[1][1] is not None:
@@ -479,15 +479,15 @@ class CRFBiRNNModel(nn.Module):
                         backpointer[(j, curr)] = (j-1, prev.item())
             
             cur_pos = (n,self.eos_t)
-            # most_prob_tag_seq_list = [cur_pos]
-            # print(backpointer)
-            while cur_pos in backpointer and backpointer[cur_pos][1] != self.bos_t:
+            most_prob_tag_seq_list = [corpus.tagset[self.eos_t]]
+
+            while cur_pos in backpointer:
                  most_prob_tag_seq_list.append(corpus.tagset[backpointer[cur_pos][1]])
                  cur_pos = backpointer[cur_pos]
             most_prob_tag_seq_list = most_prob_tag_seq_list[::-1]
 
             resList = [("_BOS_WORD_","_BOS_TAG_")]
-            for i, tag in enumerate(most_prob_tag_seq_list):
+            for i, tag in enumerate(most_prob_tag_seq_list[1:-1]):
                 word = sentence[i+1][0]
                 resList.append((word, tag))
             resList.append(("_EOS_WORD_","_EOS_TAG_"))
@@ -632,15 +632,19 @@ class CRFBiRNNModel(nn.Module):
                 with torch.no_grad():       # type: ignore # don't retain gradients during evaluation
                     dev_loss = loss(self)   # this will print its own log messages
                 # print(f"old_dev_loss: {old_dev_loss}, dev_loss: {dev_loss}")
-                if (old_dev_loss is not None and dev_loss >= old_dev_loss * (1-tolerance)) or m > max_iter:
+                if old_dev_loss is not None and dev_loss >= old_dev_loss * (1-tolerance):
                     # we haven't gotten much better, so stop
+                    logger.info("\t Early Stopping: ")
                     self.save(save_path)  # Store this model, in case we'd like to restore it later.
                     break
+                if m > max_iter:
+                    logger.info("\t stop training -- exceeds maximal iteration {max_iter}")
+                    self.save(save_path)
+                    break
                 old_dev_loss = dev_loss            # remember for next eval batch
-
             # Save models every "save_setep" iteration
-            if m % save_step == 0:
-                logger.info(f"Saving the model every {save_step} iteration: currently {m / save_step} times to save")
+            if m % save_step == 0 and m != 0:
+                logger.info(f"Saving the model every {save_step} iteration: currently {int(m / save_step)} times to save")
                 self.save(save_path)
             # Finally, add likelihood of sentence m to the minibatch objective.
             log_likelihood = log_likelihood + self.log_prob(sentence, corpus)

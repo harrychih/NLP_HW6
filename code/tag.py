@@ -176,6 +176,7 @@ def main() -> None:
                         max_iter=args.max_iters,
                         save_step=args.save_step)
         except KeyboardInterrupt:
+            logging.info(f"KeyboardInterrupt -- saved model to {args.save_path}")
             model.save(args.save_path)
     tagger_write_output(model, dev, Path(args.eval+".output") if args.output_file is None else args.output_file)
 
