@@ -1,4 +1,4 @@
-# NLP_HW6
+# Part-of-speech Taggers
 
 ## Introduction
 This is a Homework at JHU CS 665 - Natural Language Processing Course. In this project, we built three part-of-speech taggers: HMM (Hidden Markov Model), CRF(Condition Random Field), and CRF with BiRNN (Bidirectional Random Field) word embedding.
