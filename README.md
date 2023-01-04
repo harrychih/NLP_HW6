@@ -5,10 +5,4 @@ This is a Homework at JHU CS 665 - Natural Language Processing Course. In this p
 
 ## Setup
 Please run 
-'''
-conda env create -f nlp-class.yml
-''' 
-under /code directory. And run 
-'''
-conda activate nlp-class
-'''
+```conda env create -f nlp-class.yml``` under /code directory. And run  ```conda activate nlp-class```
