@@ -6,3 +6,10 @@ This is a Homework at JHU CS 665 - Natural Language Processing Course. In this p
 ## Setup
 Please run 
 ```conda env create -f nlp-class.yml``` under /code directory. And run  ```conda activate nlp-class```
+
+## Training
+Please see ```code/tagger.py``` for training three different models.
+
+## Additional Info
+You would find the model setting for HMM in ```code/hmm.py``` and CRF as well as Improved CRF (CRF with BiRNN) in ```code/crf.py```.
+
